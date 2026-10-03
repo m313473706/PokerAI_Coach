@@ -1,0 +1,23 @@
+Poker AI Coach 0.3.2 — Windows EXE 自动构建包
+
+目的：
+生成真正的 PokerAI_Coach.exe。
+最终使用者不需要安装 Python，解压后直接双击 EXE。
+
+最简单的方法：
+1. 在 GitHub 新建一个空的 Repository。
+2. 把这个 ZIP 解压后的全部文件上传到 Repository。
+3. 打开 GitHub 的 Actions。
+4. 选择 “Build PokerAI Coach Windows EXE”。
+5. 点击 “Run workflow”。
+6. 等待 Windows runner 完成构建。
+7. 打开完成的 workflow，进入 Artifacts。
+8. 下载 PokerAI_Coach_Windows_EXE。
+9. 解压后得到 PokerAI_Coach.exe。
+10. 在 Windows 上双击即可运行。
+
+这个构建使用 GitHub 提供的 Windows runner + PyInstaller。
+本地电脑不需要安装 Python。
+
+注意：
+当前 ChatGPT 工作环境是 Linux，无法直接运行 Windows 打包器，因此这里不能直接生成可执行的 Windows .exe 文件。
