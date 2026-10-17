@@ -22,6 +22,8 @@ try:
 except Exception as exc:
     IMPORT_ERROR = exc
 
+from poker_engine import estimate_equity, evaluate_hand, self_check as engine_self_check
+
 APP_TITLE = "Poker AI Coach — Windows 屏幕采集与视觉理解"
 if os.name == "nt":
     try:
@@ -90,6 +92,82 @@ def visible_windows():
     rows.sort(key=lambda row: (0 if any(word in row.title.lower() for word in ("poker", "holdem", "texas")) else 1, row.title.lower()))
     return rows
 
+class BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+        ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+        ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD),
+    ]
+
+class RGBQUAD(ctypes.Structure):
+    _fields_ = [("rgbBlue", ctypes.c_ubyte), ("rgbGreen", ctypes.c_ubyte), ("rgbRed", ctypes.c_ubyte), ("rgbReserved", ctypes.c_ubyte)]
+
+class BITMAPINFO(ctypes.Structure):
+    _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", RGBQUAD * 1)]
+
+def _capture_printwindow(handle, width, height):
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    hwnd = wintypes.HWND(handle)
+    user32.GetWindowDC.argtypes = [wintypes.HWND]
+    user32.GetWindowDC.restype = ctypes.c_void_p
+    user32.ReleaseDC.argtypes = [wintypes.HWND, ctypes.c_void_p]
+    user32.ReleaseDC.restype = ctypes.c_int
+    user32.PrintWindow.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.UINT]
+    user32.PrintWindow.restype = wintypes.BOOL
+    gdi32.CreateCompatibleDC.argtypes = [ctypes.c_void_p]
+    gdi32.CreateCompatibleDC.restype = ctypes.c_void_p
+    gdi32.CreateCompatibleBitmap.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    gdi32.CreateCompatibleBitmap.restype = ctypes.c_void_p
+    gdi32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    gdi32.SelectObject.restype = ctypes.c_void_p
+    gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    gdi32.DeleteDC.argtypes = [ctypes.c_void_p]
+    gdi32.DeleteDC.restype = wintypes.BOOL
+    gdi32.GetDIBits.argtypes = [ctypes.c_void_p, ctypes.c_void_p, wintypes.UINT, wintypes.UINT, ctypes.c_void_p, ctypes.POINTER(BITMAPINFO), wintypes.UINT]
+    gdi32.GetDIBits.restype = ctypes.c_int
+
+    window_dc = user32.GetWindowDC(hwnd)
+    if not window_dc:
+        return None
+    memory_dc = None
+    bitmap = None
+    previous = None
+    try:
+        memory_dc = gdi32.CreateCompatibleDC(window_dc)
+        bitmap = gdi32.CreateCompatibleBitmap(window_dc, width, height)
+        if not memory_dc or not bitmap:
+            return None
+        previous = gdi32.SelectObject(memory_dc, bitmap)
+        if not user32.PrintWindow(hwnd, memory_dc, 2):
+            return None
+        if previous:
+            gdi32.SelectObject(memory_dc, previous)
+            previous = None
+        info = BITMAPINFO()
+        info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        info.bmiHeader.biWidth = width
+        info.bmiHeader.biHeight = -height
+        info.bmiHeader.biPlanes = 1
+        info.bmiHeader.biBitCount = 32
+        info.bmiHeader.biCompression = 0
+        info.bmiHeader.biSizeImage = width * height * 4
+        pixels = ctypes.create_string_buffer(width * height * 4)
+        rows = gdi32.GetDIBits(memory_dc, bitmap, 0, height, pixels, ctypes.byref(info), 0)
+        if rows != height:
+            return None
+        return Image.frombuffer("RGB", (width, height), pixels.raw, "raw", "BGRX", 0, 1).copy()
+    finally:
+        if previous and memory_dc:
+            gdi32.SelectObject(memory_dc, previous)
+        if bitmap:
+            gdi32.DeleteObject(bitmap)
+        if memory_dc:
+            gdi32.DeleteDC(memory_dc)
+        user32.ReleaseDC(hwnd, window_dc)
+
 def capture_window(window):
     user32 = _windows_api()
     if user32.IsIconic(window.handle):
@@ -98,10 +176,18 @@ def capture_window(window):
     if not user32.GetWindowRect(window.handle, ctypes.byref(rect)):
         raise RuntimeError("无法读取所选窗口的位置。")
     box = (rect.left, rect.top, rect.right, rect.bottom)
-    if box[2] - box[0] < 120 or box[3] - box[1] < 100:
+    width = box[2] - box[0]
+    height = box[3] - box[1]
+    if width < 120 or height < 100:
         raise RuntimeError("所选窗口区域太小，无法识别。")
+    # 优先请求 Windows 直接绘制目标窗口，减少教练窗口遮挡的影响；不支持时回退到屏幕区域采集。
+    try:
+        rendered = _capture_printwindow(window.handle, width, height)
+        if rendered is not None:
+            return rendered
+    except Exception:
+        pass
     return ImageGrab.grab(bbox=box, all_screens=True).convert("RGB")
-
 def normalize_card_text(text):
     value = str(text).upper().replace("10", "T").replace(" ", "")
     match = CARD_CODE.search(value)
@@ -264,6 +350,80 @@ def make_state(window, image, lines, card_boxes, card_values):
         "说明": "本程序仅输出屏幕证据和视觉候选；未可靠识别的字段不会猜测，也不会据此生成策略建议。",
     }
 
+def build_coach_advice(state):
+    table = state.get("牌局候选", {})
+    cards = table.get("牌面区域", [])
+    hero_rows = sorted(
+        [card for card in cards if card.get("zone") == "hero候选" and card.get("stable")],
+        key=lambda card: card.get("center_normalized", [0, 0])[0],
+    )
+    board_rows = sorted(
+        [card for card in cards if card.get("zone") == "公共牌候选" and card.get("stable")],
+        key=lambda card: card.get("center_normalized", [0, 0])[0],
+    )
+    if len(hero_rows) != 2:
+        return {"状态": "等待识别", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
+                "建议": "等待屏幕稳定识别到两张自己的手牌。"}
+    if len(board_rows) not in (0, 3, 4, 5):
+        return {"状态": "等待牌面稳定", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
+                "建议": "公共牌数量尚未稳定，暂不生成建议。"}
+
+    selected = hero_rows + board_rows
+    if any("?" in card.get("candidate", "") or card.get("confidence", 0) < 0.45 for card in selected):
+        return {"状态": "识别置信度不足", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
+                "建议": "牌面花色或点数尚未可靠识别；请保持牌桌清晰可见，暂不猜测行动。"}
+    hole = [card["candidate"] for card in hero_rows]
+    board = [card["candidate"] for card in board_rows]
+    try:
+        equity_result = estimate_equity(hole, board, iterations=400)
+        equity = equity_result["equity"]
+        hand_name = evaluate_hand(hole + board)[2] if len(board) >= 3 else "翻牌前"
+    except ValueError as exc:
+        return {"状态": "牌面冲突", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
+                "建议": "识别结果存在冲突，暂不分析：" + str(exc)}
+
+    money = table.get("底池与筹码", [])
+    pot_item = next((item for item in money if item.get("label") == "底池候选"), None)
+    call_item = next((item for item in money if any(word in item.get("source_text", "").lower()
+                      for word in ("call", "跟注"))), None)
+    pot = call_amount = None
+    try:
+        if pot_item:
+            pot = float(pot_item["value"])
+        if call_item:
+            call_amount = float(call_item["value"])
+    except (TypeError, ValueError):
+        pot = call_amount = None
+
+    pot_odds = None
+    if pot is not None and call_amount is not None and pot > 0 and call_amount >= 0:
+        pot_odds = call_amount / (pot + call_amount) if pot + call_amount else None
+    if pot_odds is not None:
+        margin = equity - pot_odds
+        if margin >= 0.08:
+            suggestion = "当前胜率高于识别到的跟注门槛，可考虑继续；仍需留意对手范围和识别误差。"
+        elif margin <= -0.08:
+            suggestion = "当前胜率低于识别到的跟注门槛，弃牌方向更稳妥。"
+        else:
+            suggestion = "处于赔率边界，谨慎处理；请核对底池和跟注金额识别。"
+        odds_text = f"{pot_odds:.1%}（跟注 {call_amount:g} / 底池 {pot:g}）"
+    else:
+        odds_text = "未能同时识别底池与跟注金额"
+        if equity >= 0.72:
+            suggestion = "对随机手牌基准胜率较高；未读到下注金额和对手范围，暂不自动建议下注尺寸。"
+        elif equity <= 0.35:
+            suggestion = "对随机手牌基准胜率偏低；如当前需要跟注，先核对底池赔率。"
+        else:
+            suggestion = "目前只给出对随机手牌的胜率基准；下注金额或对手范围不足，暂不推荐具体动作。"
+    return {
+        "状态": "自动分析",
+        "牌型": hand_name,
+        "对随机手牌胜率": f"{equity:.1%}（蒙特卡洛 {equity_result['samples']} 次）",
+        "底池赔率": odds_text,
+        "建议": suggestion,
+        "分析依据": "仅使用连续稳定的屏幕识别结果；胜率对手模型为随机两张手牌，不等于真实对手范围。",
+    }
+
 def annotate_image(image, state):
     output = image.copy()
     draw = ImageDraw.Draw(output)
@@ -322,8 +482,10 @@ class VisionApp(tk.Tk):
         ttk.Label(left, text="实时牌桌画面（绿色为识别到的牌区，蓝色为文字）").pack(anchor="w", pady=(0, 5))
         self.preview = ttk.Label(left, text="选择牌桌窗口后开始实时识别", anchor="center", relief="solid")
         self.preview.pack(fill="both", expand=True)
-        ttk.Label(right, text="自动识别结果").pack(anchor="w", pady=(0, 5))
-        self.output = tk.Text(right, wrap="word", font=("Consolas", 10), state="disabled")
+        ttk.Label(right, text="自动识别与教练建议").pack(anchor="w", pady=(0, 5))
+        self.coach = ttk.Label(right, text="等待实时屏幕识别……", wraplength=430, justify="left", foreground="#154360")
+        self.coach.pack(fill="x", anchor="w", pady=(0, 8))
+        self.output = tk.Text(right, wrap="word", font=("Segoe UI", 10), state="disabled")
         self.output.pack(fill="both", expand=True)
         bottom = ttk.Frame(self, padding=(12, 0, 12, 10))
         bottom.pack(fill="x")
@@ -417,6 +579,7 @@ class VisionApp(tk.Tk):
                     values.append(read_card_corner(engine, crop, (0, 0, crop.width, crop.height)))
                 state = make_state(window, frame, lines, boxes, values)
                 self._mark_stability(state["牌局候选"]["牌面区域"])
+                state["教练分析"] = build_coach_advice(state)
                 annotated = annotate_image(frame, state)
                 self._offer(("frame", annotated, state))
                 elapsed = time.monotonic() - started
@@ -444,6 +607,7 @@ class VisionApp(tk.Tk):
                     self.last_image, self.last_state = item[1], item[2]
                     self._show_frame(self.last_image)
                     self._show_state(self.last_state)
+                    self._show_coach(self.last_state.get("教练分析", {}))
                     count = len(self.last_state["画面文字"])
                     cards = len(self.last_state["牌局候选"]["牌面区域"])
                     self.status.config(text=f"实时识别中：发现 {cards} 个牌面区域、{count} 条文字。识别结果是候选值，尚未针对真实模拟器校准。")
@@ -464,6 +628,21 @@ class VisionApp(tk.Tk):
         self.output.delete("1.0", "end")
         self.output.insert("1.0", text)
         self.output.configure(state="disabled")
+
+    def _show_coach(self, advice):
+        if not hasattr(self, "coach"):
+            return
+        lines = [
+            "自动教练分析",
+            "状态：" + str(advice.get("状态", "等待识别")),
+            "牌型：" + str(advice.get("牌型", "—")),
+            "对随机手牌胜率：" + str(advice.get("对随机手牌胜率", "—")),
+            "底池赔率：" + str(advice.get("底池赔率", "—")),
+            "建议：" + str(advice.get("建议", "等待识别牌面。")),
+        ]
+        if advice.get("分析依据"):
+            lines.append("依据：" + advice["分析依据"])
+        self.coach.configure(text="\n".join(lines))
 
     def export_record(self):
         if not self.last_state or not self.last_image:
@@ -489,6 +668,7 @@ class VisionApp(tk.Tk):
 def self_check():
     if IMPORT_ERROR:
         raise RuntimeError(f"视觉组件加载失败：{IMPORT_ERROR}")
+    engine_self_check()
     engine = RapidOCR()
     sample = Image.new("RGB", (320, 240), "white")
     engine(np.asarray(sample))

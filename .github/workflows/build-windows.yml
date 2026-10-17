@@ -1,4 +1,4 @@
-name: Build Poker AI Coach Windows Screen Vision
+name: Build Poker AI Coach Ultimate Windows
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: 获取源码
         uses: actions/checkout@v4
@@ -51,25 +51,38 @@ jobs:
           $process = Start-Process -FilePath "dist/PokerAI_Coach.exe" -ArgumentList "--self-check" -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             if (Test-Path $diagnostic) {
-              Write-Host "视觉模型启动诊断："
+              Write-Host "程序自检诊断："
               Get-Content -Raw -LiteralPath $diagnostic
             }
-            throw "EXE 内置视觉模型检查失败，退出码 $($process.ExitCode)"
+            throw "程序内置组件检查失败，退出码 $($process.ExitCode)"
           }
 
-      - name: 准备交付包
+      - name: 生成中文 Windows 安装程序
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          Copy-Item "dist/PokerAI_Coach.exe" "release/PokerAI_Coach.exe"
+          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          if (!$iscc) {
+            $candidate = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+            if (Test-Path -LiteralPath $candidate) { $iscc = Get-Item -LiteralPath $candidate }
+          }
+          if (!$iscc) { choco install innosetup --no-progress -y }
+          if (!$iscc) {
+            $candidate = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+            if (Test-Path -LiteralPath $candidate) { $iscc = Get-Item -LiteralPath $candidate }
+          }
+          if (!$iscc) { throw "找不到 Inno Setup 编译器" }
+          & $iscc.Source "installer.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Windows 安装程序编译失败，退出码 $LASTEXITCODE" }
+          if (!(Test-Path "release/PokerAI_Coach_Ultimate_Setup.exe")) { throw "安装程序未生成" }
           Copy-Item "README.md" "release/README.md"
           Copy-Item "INSTALL.txt" "release/安装说明.txt"
-          Compress-Archive -Path "release/*" -DestinationPath "PokerAI_Coach_Windows_ScreenVision.zip" -Force
+          Compress-Archive -Path "release/*" -DestinationPath "PokerAI_Coach_Ultimate_Windows.zip" -Force
 
-      - name: 上传 Windows 构建包
+      - name: 上传唯一 Windows 交付包
         uses: actions/upload-artifact@v4
         with:
-          name: PokerAI_Coach_Windows_ScreenVision
-          path: PokerAI_Coach_Windows_ScreenVision.zip
+          name: PokerAI_Coach_Ultimate_Windows
+          path: PokerAI_Coach_Ultimate_Windows.zip
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
