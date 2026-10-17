@@ -347,7 +347,7 @@ def make_state(window, image, lines, card_boxes, card_values):
             "行动文字": extract_action_candidates(lines),
         },
         "画面文字": lines,
-        "说明": "本程序仅输出屏幕证据和视觉候选；未可靠识别的字段不会猜测，也不会据此生成策略建议。",
+        "说明": "本程序只在屏幕识别稳定后计算牌型和胜率；信息不足时等待，不猜牌或给出动作建议。",
     }
 
 def build_coach_advice(state):
@@ -369,15 +369,21 @@ def build_coach_advice(state):
                 "建议": "公共牌数量尚未稳定，暂不生成建议。"}
 
     selected = hero_rows + board_rows
-    if any("?" in card.get("candidate", "") or card.get("confidence", 0) < 0.45 for card in selected):
+    if any(str(card.get("candidate", "?")).startswith("?") or card.get("confidence", 0) < 0.45 for card in selected):
         return {"状态": "识别置信度不足", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
-                "建议": "牌面花色或点数尚未可靠识别；请保持牌桌清晰可见，暂不猜测行动。"}
+                "建议": "牌面点数尚未可靠识别；请保持牌桌清晰可见，暂不猜测行动。"}
     hole = [card["candidate"] for card in hero_rows]
     board = [card["candidate"] for card in board_rows]
+    unknown_suits = sum(card.endswith("?") for card in hole + board)
     try:
         equity_result = estimate_equity(hole, board, iterations=400)
         equity = equity_result["equity"]
-        hand_name = evaluate_hand(hole + board)[2] if len(board) >= 3 else "翻牌前"
+        if len(board) >= 3 and unknown_suits == 0:
+            hand_name = evaluate_hand(hole + board)[2]
+        elif len(board) >= 3:
+            hand_name = "花色未全识别，牌型待定"
+        else:
+            hand_name = "翻牌前"
     except ValueError as exc:
         return {"状态": "牌面冲突", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
                 "建议": "识别结果存在冲突，暂不分析：" + str(exc)}
@@ -415,14 +421,16 @@ def build_coach_advice(state):
             suggestion = "对随机手牌基准胜率偏低；如当前需要跟注，先核对底池赔率。"
         else:
             suggestion = "目前只给出对随机手牌的胜率基准；下注金额或对手范围不足，暂不推荐具体动作。"
+    equity_note = "；花色未识别部分按剩余花色随机估算" if unknown_suits else ""
     return {
         "状态": "自动分析",
         "牌型": hand_name,
-        "对随机手牌胜率": f"{equity:.1%}（蒙特卡洛 {equity_result['samples']} 次）",
+        "对随机手牌胜率": f"{equity:.1%}（蒙特卡洛 {equity_result['samples']} 次{equity_note}）",
         "底池赔率": odds_text,
         "建议": suggestion,
-        "分析依据": "仅使用连续稳定的屏幕识别结果；胜率对手模型为随机两张手牌，不等于真实对手范围。",
+        "分析依据": "仅使用连续稳定的屏幕识别结果；对手模型为随机两张手牌，不等于真实对手范围。",
     }
+
 
 def annotate_image(image, state):
     output = image.copy()
