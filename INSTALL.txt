@@ -1,0 +1,14 @@
+Poker AI Coach — Windows 屏幕采集与视觉理解
+
+安装步骤
+1. 下载 PokerAI_Coach_Windows_ScreenVision.zip。
+2. 右键压缩包，选择“全部解压缩”，解压到普通文件夹。
+3. 双击 PokerAI_Coach.exe。
+4. 打开扑克模拟器，回到 Poker AI Coach，点击“刷新窗口”。
+5. 选择扑克模拟器窗口，点击“开始实时识别”。
+6. 点击“导出识别记录”可保存当前 JSON 和对应 PNG 截图。
+
+说明
+- 视觉识别在本机运行，不会自动上传屏幕画面。
+- 识别字段以候选形式显示；不同模拟器画面需要实机校准。
+- 如果 Windows SmartScreen 提示未知发布者，请先确认下载来源为本项目的 GitHub Actions 构建。

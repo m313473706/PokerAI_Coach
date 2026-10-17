@@ -1,3 +1,2 @@
 @echo off
-python app.py
-pause
+start "" "%~dp0PokerAI_Coach.exe"
