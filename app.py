@@ -22,6 +22,13 @@ try:
 except Exception as exc:
     IMPORT_ERROR = exc
 
+WINDOWS_CAPTURE_IMPORT_ERROR = None
+try:
+    from windows_capture import WindowsCapture
+except Exception as exc:
+    WindowsCapture = None
+    WINDOWS_CAPTURE_IMPORT_ERROR = exc
+
 from poker_engine import estimate_equity, evaluate_hand, self_check as engine_self_check
 
 APP_TITLE = "Poker AI Coach — Windows 屏幕采集与视觉理解"
@@ -167,6 +174,71 @@ def _capture_printwindow(handle, width, height):
         if memory_dc:
             gdi32.DeleteDC(memory_dc)
         user32.ReleaseDC(hwnd, window_dc)
+
+class _GraphicsWindowCapture:
+    """通过 Windows Graphics Capture 按窗口句柄采集硬件加速窗口。"""
+
+    def __init__(self, handle):
+        if WindowsCapture is None:
+            raise RuntimeError(f"Windows 图形捕获组件未加载：{WINDOWS_CAPTURE_IMPORT_ERROR}")
+        self._condition = threading.Condition()
+        self._latest_image = None
+        self._error = None
+        self._closed = False
+        self._capture = WindowsCapture(
+            window_hwnd=int(handle),
+            cursor_capture=False,
+            draw_border=False,
+            minimum_update_interval=250,
+        )
+
+        def on_frame_arrived(frame, capture_control):
+            try:
+                pixels = np.asarray(frame.frame_buffer).copy()
+                if pixels.ndim != 3 or pixels.shape[2] != 4:
+                    raise RuntimeError(f"窗口图形捕获返回异常画面尺寸：{pixels.shape}")
+                rgb = cv2.cvtColor(pixels, cv2.COLOR_BGRA2RGB)
+                image = Image.fromarray(rgb, "RGB")
+                with self._condition:
+                    self._latest_image = image
+                    self._condition.notify_all()
+            except Exception as exc:
+                with self._condition:
+                    self._error = exc
+                    self._condition.notify_all()
+
+        def on_closed():
+            with self._condition:
+                self._closed = True
+                self._latest_image = None
+                self._condition.notify_all()
+
+        self._capture.event(on_frame_arrived)
+        self._capture.event(on_closed)
+        self._control = self._capture.start_free_threaded()
+
+    def get_image(self, timeout=3.0):
+        with self._condition:
+            ready = self._condition.wait_for(
+                lambda: self._latest_image is not None or self._error is not None or self._closed,
+                timeout=max(0.0, float(timeout)),
+            )
+            if not ready:
+                return None
+            if self._error is not None:
+                raise RuntimeError(f"Windows 图形捕获失败：{self._error}") from self._error
+            if self._closed or self._latest_image is None:
+                raise RuntimeError("目标牌桌窗口已关闭，Windows 图形捕获结束。")
+            return self._latest_image.copy()
+
+    def close(self):
+        control = getattr(self, "_control", None)
+        if control is not None:
+            try:
+                control.stop()
+                control.wait()
+            except Exception:
+                pass
 
 def _is_blank_capture(image):
     """检测 PrintWindow 对硬件加速窗口返回的纯黑/近乎全黑画面。"""
@@ -600,12 +672,30 @@ class VisionApp(tk.Tk):
                 card["状态"] = "单帧或未稳定候选"
 
     def _scan_loop(self, window):
+        graphics_capture = None
         try:
             engine = RapidOCR()
+            try:
+                graphics_capture = _GraphicsWindowCapture(window.handle)
+            except Exception as exc:
+                self._offer(("status", f"目标窗口图形捕获不可用，将尝试兼容采集：{exc}"))
             self._offer(("status", "本地视觉模型已加载，正在采集牌桌窗口……"))
             while not self.stop_event.is_set():
                 started = time.monotonic()
-                frame = capture_window(window)
+                frame = None
+                capture_method = None
+                if graphics_capture is not None:
+                    try:
+                        frame = graphics_capture.get_image(timeout=2.5)
+                        if frame is not None:
+                            capture_method = "Windows 图形捕获（目标窗口）"
+                    except Exception as exc:
+                        graphics_capture.close()
+                        graphics_capture = None
+                        self._offer(("status", f"目标窗口图形捕获中断，改用兼容采集：{exc}"))
+                if frame is None:
+                    frame = capture_window(window)
+                    capture_method = "窗口绘制 / 桌面区域回退"
                 lines = ocr_lines(engine, frame)
                 boxes = find_card_regions(frame)
                 values = []
@@ -614,6 +704,7 @@ class VisionApp(tk.Tk):
                     crop = frame.crop((x1, y1, x2, y2))
                     values.append(read_card_corner(engine, crop, (0, 0, crop.width, crop.height)))
                 state = make_state(window, frame, lines, boxes, values)
+                state["采集方式"] = capture_method
                 self._mark_stability(state["牌局候选"]["牌面区域"])
                 state["教练分析"] = build_coach_advice(state)
                 annotated = annotate_image(frame, state)
@@ -623,6 +714,9 @@ class VisionApp(tk.Tk):
             self._offer(("stopped",))
         except Exception as exc:
             self._offer(("error", str(exc)))
+        finally:
+            if graphics_capture is not None:
+                graphics_capture.close()
 
     def _poll_messages(self):
         try:
@@ -646,7 +740,8 @@ class VisionApp(tk.Tk):
                     self._show_coach(self.last_state.get("教练分析", {}))
                     count = len(self.last_state["画面文字"])
                     cards = len(self.last_state["牌局候选"]["牌面区域"])
-                    self.status.config(text=f"实时识别中：发现 {cards} 个牌面区域、{count} 条文字。识别结果是候选值，尚未针对真实模拟器校准。")
+                    source = self.last_state.get("采集方式", "采集方式未知")
+                    self.status.config(text=f"实时识别中：{source}；发现 {cards} 个牌面区域、{count} 条文字。识别结果是候选值，尚未针对真实模拟器校准。")
         except queue.Empty:
             pass
         self.after(120, self._poll_messages)
@@ -704,6 +799,8 @@ class VisionApp(tk.Tk):
 def self_check():
     if IMPORT_ERROR:
         raise RuntimeError(f"视觉组件加载失败：{IMPORT_ERROR}")
+    if WindowsCapture is None:
+        raise RuntimeError(f"Windows 图形捕获组件加载失败：{WINDOWS_CAPTURE_IMPORT_ERROR}")
     blank = Image.new("RGB", (96, 72), (0, 0, 0))
     table = Image.new("RGB", (96, 72), (18, 54, 38))
     ImageDraw.Draw(table).rounded_rectangle((30, 18, 66, 64), radius=4, fill=(238, 238, 230))

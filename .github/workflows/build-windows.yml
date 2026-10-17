@@ -38,6 +38,7 @@ jobs:
           --windowed
           --name PokerAI_Coach
           --collect-all rapidocr_onnxruntime
+          --collect-all windows_capture
           --collect-all onnxruntime
           --collect-all cv2
           app.py
