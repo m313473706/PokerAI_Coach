@@ -79,6 +79,25 @@ jobs:
           Copy-Item "INSTALL.txt" "release/安装说明.txt"
           Compress-Archive -Path "release/*" -DestinationPath "PokerAI_Coach_Ultimate_Windows.zip" -Force
 
+      - name: 检查交付包里的安装文件
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead("PokerAI_Coach_Ultimate_Windows.zip")
+          try {
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName })
+            $required = @("PokerAI_Coach_Ultimate_Setup.exe", "README.md", "安装说明.txt")
+            foreach ($name in $required) {
+              if ($entries -notcontains $name) { throw "交付包缺少文件：$name" }
+            }
+            $setup = $archive.GetEntry("PokerAI_Coach_Ultimate_Setup.exe")
+            if ($setup.Length -lt 50000000) { throw "安装器大小异常：$($setup.Length) bytes" }
+            Write-Host "交付包文件：$($entries -join ', ')"
+            Write-Host "安装器大小：$($setup.Length) bytes"
+          } finally {
+            $archive.Dispose()
+          }
+
       - name: 上传唯一 Windows 交付包
         uses: actions/upload-artifact@v4
         with:
