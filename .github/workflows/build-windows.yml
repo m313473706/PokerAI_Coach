@@ -48,14 +48,13 @@ jobs:
           if (!(Test-Path "dist/PokerAI_Coach.exe")) { throw "未生成 PokerAI_Coach.exe" }
           $diagnostic = Join-Path $env:TEMP "PokerAI_Coach_self_check_error.txt"
           if (Test-Path $diagnostic) { Remove-Item -LiteralPath $diagnostic -Force }
-          & "dist/PokerAI_Coach.exe" --self-check
-          $exitCode = $LASTEXITCODE
-          if ($exitCode -ne 0) {
+          $process = Start-Process -FilePath "dist/PokerAI_Coach.exe" -ArgumentList "--self-check" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
             if (Test-Path $diagnostic) {
               Write-Host "视觉模型启动诊断："
               Get-Content -Raw -LiteralPath $diagnostic
             }
-            throw "EXE 内置视觉模型检查失败，退出码 $exitCode"
+            throw "EXE 内置视觉模型检查失败，退出码 $($process.ExitCode)"
           }
 
       - name: 准备交付包
