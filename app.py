@@ -687,7 +687,12 @@ class VisionApp(tk.Tk):
                 if graphics_capture is not None:
                     try:
                         frame = graphics_capture.get_image(timeout=2.5)
-                        if frame is not None:
+                        if frame is not None and _is_blank_capture(frame):
+                            graphics_capture.close()
+                            graphics_capture = None
+                            frame = None
+                            self._offer(("status", "目标窗口图形捕获返回黑屏/空白，切换到窗口绘制 / 桌面区域回退采集。"))
+                        elif frame is not None:
                             capture_method = "Windows 图形捕获（目标窗口）"
                     except Exception as exc:
                         graphics_capture.close()
