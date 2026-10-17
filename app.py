@@ -168,6 +168,18 @@ def _capture_printwindow(handle, width, height):
             gdi32.DeleteDC(memory_dc)
         user32.ReleaseDC(hwnd, window_dc)
 
+def _is_blank_capture(image):
+    """检测 PrintWindow 对硬件加速窗口返回的纯黑/近乎全黑画面。"""
+    pixels = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    if pixels.ndim != 3 or pixels.shape[0] == 0 or pixels.shape[1] == 0:
+        return True
+    luminance = (
+        pixels[:, :, 0].astype(np.float32) * 0.299
+        + pixels[:, :, 1].astype(np.float32) * 0.587
+        + pixels[:, :, 2].astype(np.float32) * 0.114
+    )
+    return float(np.percentile(luminance, 99)) < 8.0 and float(np.mean(luminance > 16.0)) < 0.005
+
 def capture_window(window):
     user32 = _windows_api()
     if user32.IsIconic(window.handle):
@@ -180,14 +192,30 @@ def capture_window(window):
     height = box[3] - box[1]
     if width < 120 or height < 100:
         raise RuntimeError("所选窗口区域太小，无法识别。")
-    # 优先请求 Windows 直接绘制目标窗口，减少教练窗口遮挡的影响；不支持时回退到屏幕区域采集。
+
+    # 部分模拟器使用硬件加速；PrintWindow 可能返回成功但画面全黑。
+    # 只有确认窗口图像不是空白后才采信，否则回退到桌面实际截图。
+    rendered = None
     try:
         rendered = _capture_printwindow(window.handle, width, height)
-        if rendered is not None:
-            return rendered
     except Exception:
         pass
-    return ImageGrab.grab(bbox=box, all_screens=True).convert("RGB")
+    if rendered is not None and not _is_blank_capture(rendered):
+        return rendered
+
+    try:
+        desktop = ImageGrab.grab(bbox=box, all_screens=True).convert("RGB")
+    except Exception as exc:
+        if rendered is not None and _is_blank_capture(rendered):
+            raise RuntimeError("窗口采集返回黑屏，桌面区域截图也失败；请确认模拟器窗口可见后重试。") from exc
+        raise
+    if not _is_blank_capture(desktop):
+        return desktop
+
+    raise RuntimeError(
+        "采集到的牌桌画面是全黑/空白：窗口绘制接口与屏幕区域截图都没有拿到画面。"
+        "请将模拟器窗口恢复并置于桌面前台，确保未被遮挡，然后重新开始识别。"
+    )
 def normalize_card_text(text):
     value = str(text).upper().replace("10", "T").replace(" ", "")
     match = CARD_CODE.search(value)
@@ -676,6 +704,11 @@ class VisionApp(tk.Tk):
 def self_check():
     if IMPORT_ERROR:
         raise RuntimeError(f"视觉组件加载失败：{IMPORT_ERROR}")
+    blank = Image.new("RGB", (96, 72), (0, 0, 0))
+    table = Image.new("RGB", (96, 72), (18, 54, 38))
+    ImageDraw.Draw(table).rounded_rectangle((30, 18, 66, 64), radius=4, fill=(238, 238, 230))
+    if not _is_blank_capture(blank) or _is_blank_capture(table):
+        raise RuntimeError("窗口空白画面检测自检失败")
     engine_self_check()
     engine = RapidOCR()
     sample = Image.new("RGB", (320, 240), "white")
