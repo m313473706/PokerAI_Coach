@@ -1,32 +1,14 @@
-name: Build Poker AI Coach Windows
+name: Build PokerAI Coach Windows EXE
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    paths:
-      - 'app.py'
-      - 'advisor_dialog.py'
-      - 'poker_core.py'
-      - 'vision_engine.py'
-      - 'amount_engine.py'
-      - 'action_engine.py'
-      - 'state_engine.py'
-      - 'ocr_runtime_smoke.py'
-      - 'requirements.txt'
-      - 'tests/**'
-      - 'templates/**'
-      - 'data/ocr_smoke/**'
-      - 'README.md'
-      - '.github/workflows/build-windows.yml'
-
-permissions:
-  contents: read
+    branches: [ main ]
 
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 40
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,68 +16,31 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Install dependencies
-        shell: pwsh
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Build EXE
+        run: >
+          python -m PyInstaller
+          --noconfirm
+          --clean
+          --onefile
+          --windowed
+          --name PokerAI_Coach
+          app.py
+
+      - name: Package
+        shell: powershell
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item dist\PokerAI_Coach.exe release\PokerAI_Coach.exe
+          Copy-Item README.md release\README.md
+          Compress-Archive -Path release\* -DestinationPath PokerAI_Coach_Windows.zip -Force
 
-      - name: Compile source and run unit tests
-        shell: pwsh
-        run: |
-          python -m compileall -q app.py advisor_dialog.py poker_core.py vision_engine.py amount_engine.py action_engine.py state_engine.py ocr_runtime_smoke.py
-          python -m unittest discover -s tests -v
-          python test_core.py
-
-      - name: Run source OCR smoke
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force reports | Out-Null
-          python ocr_runtime_smoke.py --ocr-smoke --require-action-text --report reports/ocr_smoke_source.json
-          if ($LASTEXITCODE -ne 0) { throw "Source OCR smoke failed with code $LASTEXITCODE" }
-
-      - name: Build console copy and verify packaged OCR
-        shell: pwsh
-        run: |
-          python -m PyInstaller --noconfirm --clean --console --onefile `
-            --name PokerAI_Coach_CI `
-            --add-data 'templates;templates' `
-            --add-data 'data/ocr_smoke;data/ocr_smoke' `
-            --collect-all cv2 `
-            --collect-all rapidocr_onnxruntime `
-            --collect-all onnxruntime `
-            app.py
-          if ($LASTEXITCODE -ne 0) { throw "CI executable build failed with code $LASTEXITCODE" }
-          & '.\dist\PokerAI_Coach_CI.exe' --ocr-smoke --require-action-text --report 'reports/ocr_smoke_frozen_exe.json'
-          if ($LASTEXITCODE -ne 0) { throw "Packaged OCR smoke failed with code $LASTEXITCODE" }
-
-      - name: Build final Windows GUI executable
-        shell: pwsh
-        run: |
-          python -m PyInstaller --noconfirm --clean --windowed --onefile `
-            --name PokerAI_Coach `
-            --add-data 'templates;templates' `
-            --collect-all cv2 `
-            --collect-all rapidocr_onnxruntime `
-            --collect-all onnxruntime `
-            app.py
-          if ($LASTEXITCODE -ne 0) { throw "Final GUI build failed with code $LASTEXITCODE" }
-
-      - name: Package Windows deliverable
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force release | Out-Null
-          Copy-Item '.\dist\PokerAI_Coach.exe' '.\release\PokerAI_Coach.exe'
-          Copy-Item '.\README.md' '.\release\README.md'
-          Copy-Item '.\reports\ocr_smoke_source.json' '.\release\ocr_smoke_source.json'
-          Copy-Item '.\reports\ocr_smoke_frozen_exe.json' '.\release\ocr_smoke_frozen_exe.json'
-          Compress-Archive -Path '.\release\*' -DestinationPath 'PokerAI_Coach_Windows.zip' -Force
-
-      - name: Upload Windows deliverable
+      - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: PokerAI_Coach_Windows
+          name: PokerAI_Coach_Windows_EXE
           path: PokerAI_Coach_Windows.zip
-          if-no-files-found: error

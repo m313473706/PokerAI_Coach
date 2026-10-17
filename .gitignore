@@ -1,8 +1,0 @@
-build/
-dist/
-release/
-reports/
-__pycache__/
-*.py[cod]
-*.spec
-output/
