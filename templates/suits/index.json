@@ -1,0 +1,194 @@
+[
+  {
+    "file": "heart_v1_10h.png",
+    "suit": "h",
+    "source_video_frame": "video1_024.0s_frame1440.jpg",
+    "bbox": [
+      432,
+      414,
+      107,
+      150
+    ],
+    "label": "heart_v1_10h"
+  },
+  {
+    "file": "heart_v1_jh.png",
+    "suit": "h",
+    "source_video_frame": "video1_024.0s_frame1440.jpg",
+    "bbox": [
+      556,
+      414,
+      107,
+      150
+    ],
+    "label": "heart_v1_jh"
+  },
+  {
+    "file": "spade_v1_10s.png",
+    "suit": "s",
+    "source_video_frame": "video1_024.0s_frame1440.jpg",
+    "bbox": [
+      678,
+      414,
+      109,
+      153
+    ],
+    "label": "spade_v1_10s"
+  },
+  {
+    "file": "diamond_v1_jd.png",
+    "suit": "d",
+    "source_video_frame": "video1_036.0s_frame2160.jpg",
+    "bbox": [
+      805,
+      414,
+      107,
+      150
+    ],
+    "label": "diamond_v1_jd"
+  },
+  {
+    "file": "club_v1_5c.png",
+    "suit": "c",
+    "source_video_frame": "video1_036.0s_frame2160.jpg",
+    "bbox": [
+      929,
+      414,
+      107,
+      150
+    ],
+    "label": "club_v1_5c"
+  },
+  {
+    "file": "diamond_v1_6d.png",
+    "suit": "d",
+    "source_video_frame": "video1_054.0s_frame3240.jpg",
+    "bbox": [
+      432,
+      414,
+      107,
+      150
+    ],
+    "label": "diamond_v1_6d"
+  },
+  {
+    "file": "club_v1_kc.png",
+    "suit": "c",
+    "source_video_frame": "video1_054.0s_frame3240.jpg",
+    "bbox": [
+      681,
+      414,
+      106,
+      153
+    ],
+    "label": "club_v1_kc"
+  },
+  {
+    "file": "club_v1_8c.png",
+    "suit": "c",
+    "source_video_frame": "video1_075.0s_frame4500.jpg",
+    "bbox": [
+      805,
+      414,
+      107,
+      150
+    ],
+    "label": "club_v1_8c"
+  },
+  {
+    "file": "heart_v2_9h.png",
+    "suit": "h",
+    "source_video_frame": "video2_000.0s_frame0.jpg",
+    "bbox": [
+      448,
+      430,
+      111,
+      156
+    ],
+    "label": "heart_v2_9h"
+  },
+  {
+    "file": "spade_v2_js.png",
+    "suit": "s",
+    "source_video_frame": "video2_000.0s_frame0.jpg",
+    "bbox": [
+      577,
+      430,
+      111,
+      156
+    ],
+    "label": "spade_v2_js"
+  },
+  {
+    "file": "diamond_v2_jd.png",
+    "suit": "d",
+    "source_video_frame": "video2_000.0s_frame0.jpg",
+    "bbox": [
+      707,
+      430,
+      110,
+      156
+    ],
+    "label": "diamond_v2_jd"
+  },
+  {
+    "file": "club_v2_ac.png",
+    "suit": "c",
+    "source_video_frame": "video2_000.0s_frame0.jpg",
+    "bbox": [
+      836,
+      430,
+      111,
+      156
+    ],
+    "label": "club_v2_ac"
+  },
+  {
+    "file": "club_v3_3c.png",
+    "suit": "c",
+    "source_video_frame": "video3_020.0s_frame1200.jpg",
+    "bbox": [
+      448,
+      430,
+      111,
+      156
+    ],
+    "label": "club_v3_3c"
+  },
+  {
+    "file": "diamond_v3_kd.png",
+    "suit": "d",
+    "source_video_frame": "video3_020.0s_frame1200.jpg",
+    "bbox": [
+      577,
+      430,
+      111,
+      156
+    ],
+    "label": "diamond_v3_kd"
+  },
+  {
+    "file": "spade_v3_qs.png",
+    "suit": "s",
+    "source_video_frame": "video3_020.0s_frame1200.jpg",
+    "bbox": [
+      707,
+      430,
+      110,
+      156
+    ],
+    "label": "spade_v3_qs"
+  },
+  {
+    "file": "heart_v3_10h.png",
+    "suit": "h",
+    "source_video_frame": "video3_020.0s_frame1200.jpg",
+    "bbox": [
+      835,
+      432,
+      111,
+      155
+    ],
+    "label": "heart_v3_10h"
+  }
+]
