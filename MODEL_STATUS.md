@@ -8,6 +8,10 @@
 - 对应的 [Augmented Startups Playing Cards v4](https://universe.roboflow.com/augmented-startups/playing-cards-ow27d/dataset/4) 页面标为 Public Domain，包含 52 类和 1,010 张测试图。这解决了数据集页面的许可声明，但不能证明该模型对本项目模拟器截图的识别效果。
 - Ultralytics 的[官方许可说明](https://www.ultralytics.com/license)明确说 YOLOv8 和由其训练的模型默认采用 AGPL-3.0；非 AGPL 整体分发需要 Enterprise 许可。候选模型卡上的 MIT 标记与其 YOLOv8 来源存在许可冲突风险。仓库没有记录该模型获得单独许可的证据，所以此分支不分发或下载该权重。
 
+- [Daveokw/Card-Identifier](https://github.com/Daveokw/Card-Identifier) 仓库内含 53 类 ResNet18 ONNX 文件，适合单张完整卡牌分类；GitHub 仓库没有声明许可证，README 也说明遮挡和训练集差异可能导致错误，因此不能直接随安装器分发或视作本项目的已验证识别器。
+- [MODAJ18/Playing_Cards](https://github.com/MODAJ18/Playing_Cards) 声明 MIT，但依赖 YOLOv5，模型权重需另行下载且不在仓库中；项目还包含 YOLOv5 源码及其 GPL-3.0 许可证。尚无完整权重来源链或本项目截图验证，故不采用。
+- [The-Pavels/card-reader](https://github.com/The-Pavels/card-reader) 声明 MIT 并包含 52 类 YOLO11 权重。Ultralytics 对 YOLO11 的许可同样要求核实 AGPL-3.0/Enterprise 分发条件；该仓库没有可核实的例外许可，也没有本项目模拟器截图结果，故不采用。
+
 ## 仍需完成的验收
 
 1. 选定并核实适用于该应用分发方式的权重许可及完整来源链。
