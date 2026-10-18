@@ -3,7 +3,7 @@ name: Build Poker AI Coach Ultimate Windows
 on:
   workflow_dispatch:
   push:
-    branches: [ main, windows-screen-capture-vision ]
+    branches: [ main, windows-screen-capture-vision, windows-visual-card-recognition ]
 
 permissions:
   contents: read
@@ -28,6 +28,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller==6.15.0
+
+      - name: 验证牌面安全状态
+        run: python app.py --self-check
+
+      - name: 检查视觉模型文件
+        shell: pwsh
+        run: |
+          $model = "models/playing_cards.onnx"
+          if (!(Test-Path -LiteralPath $model)) {
+            throw "未提供许可已核实的 models/playing_cards.onnx；拒绝打包 OCR-only 安装器。"
+          }
 
       - name: 打包 Windows 程序
         run: >
