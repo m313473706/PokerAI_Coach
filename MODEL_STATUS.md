@@ -14,6 +14,8 @@
 
 - [Ximilar-com/cardstream](https://github.com/Ximilar-com/cardstream) 提供 Apache-2.0 的卡牌分割与同卡 embedding 权重（模型页列出 SHA-256），可作为定位/裁切组件；但项目 README 明确用付费 Ximilar API 做卡牌身份识别，本地权重本身不输出 52 张标准牌的点数/花色，因此不能直接满足离线 Windows 识别交付。它可作为自研识别器的候选定位组件，仍需单独做兼容性回放。
 
+- [JackFurby/playing-cards](https://huggingface.co/datasets/JackFurby/playing-cards) 是标注 52 张牌的 MIT 数据集，不是预训练模型；单牌子集每类约 135 张训练图和 58 张验证图，样本由单一花色设计的牌面合成到随机背景。它可以作为训练自有分类器的起点，但分布不等同于目标模拟器截图；数据卡列出的牌面素材和纹理背景还需在分发派生权重前单独核实来源许可。
+
 ## 仍需完成的验收
 
 1. 选定并核实适用于该应用分发方式的权重许可及完整来源链。
