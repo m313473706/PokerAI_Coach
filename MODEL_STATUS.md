@@ -12,6 +12,8 @@
 - [MODAJ18/Playing_Cards](https://github.com/MODAJ18/Playing_Cards) 声明 MIT，但依赖 YOLOv5，模型权重需另行下载且不在仓库中；项目还包含 YOLOv5 源码及其 GPL-3.0 许可证。尚无完整权重来源链或本项目截图验证，故不采用。
 - [The-Pavels/card-reader](https://github.com/The-Pavels/card-reader) 声明代码与数据集为 MIT，包含 52 类 YOLO11 权重；README 报告合成验证集 mAP50 0.992、mAP50-95 0.911，并提醒未见背景/角度会降级。作者注明 AGPL-3.0 适用于检测栈，并认为可能适用于训练权重；Ultralytics 官方也将其训练模型默认列为 AGPL-3.0。仓库没有可核实的额外授权，也没有本项目模拟器截图结果，故不采用。
 
+- [Ximilar-com/cardstream](https://github.com/Ximilar-com/cardstream) 提供 Apache-2.0 的卡牌分割与同卡 embedding 权重（模型页列出 SHA-256），可作为定位/裁切组件；但项目 README 明确用付费 Ximilar API 做卡牌身份识别，本地权重本身不输出 52 张标准牌的点数/花色，因此不能直接满足离线 Windows 识别交付。它可作为自研识别器的候选定位组件，仍需单独做兼容性回放。
+
 ## 仍需完成的验收
 
 1. 选定并核实适用于该应用分发方式的权重许可及完整来源链。
