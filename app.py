@@ -387,7 +387,7 @@ def augment_card_candidates_from_ocr(image, lines, card_boxes, card_values):
     frame_w, frame_h = image.size
 
     for line in lines:
-        raw = re.sub(r"\\s+", "", str(line.get("text", "")).strip().upper())
+        raw = re.sub(r"\s+", "", str(line.get("text", "")).strip().upper())
         rank, suit = normalize_card_text(raw)
         if rank is None:
             match = CARD_RANK.fullmatch(raw.replace("10", "T"))
