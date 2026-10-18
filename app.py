@@ -380,6 +380,69 @@ def read_card_corner(engine, image, box):
     identity = (rank or "?") + (suit or "?")
     return identity, confidence
 
+def augment_card_candidates_from_ocr(image, lines, card_boxes, card_values):
+    """用整帧 OCR 补充被重叠牌面轮廓漏掉的牌点。"""
+    boxes = [list(box) for box in card_boxes]
+    values = list(card_values)
+    frame_w, frame_h = image.size
+
+    for line in lines:
+        raw = re.sub(r"\\s+", "", str(line.get("text", "")).strip().upper())
+        rank, suit = normalize_card_text(raw)
+        if rank is None:
+            match = CARD_RANK.fullmatch(raw.replace("10", "T"))
+            if not match:
+                continue
+            rank = match.group(1).replace("10", "T")
+        confidence = float(line.get("confidence", 0.0))
+        if confidence < 0.45:
+            continue
+        try:
+            box = [int(value) for value in line["box"]]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if len(box) != 4:
+            continue
+        x1, y1, x2, y2 = box
+        text_w, text_h = x2 - x1, y2 - y1
+        if text_w < 4 or text_h < 8 or text_w > text_h * 2.4:
+            continue
+
+        zone, cx, cy = classify_zone(box, image.size)
+        if zone == "其他牌区":
+            continue
+        center_x, center_y = (x1 + x2) / 2, (y1 + y2) / 2
+
+        matched = False
+        for index, prior in enumerate(boxes):
+            prior_zone, _, _ = classify_zone(prior, image.size)
+            if prior_zone != zone:
+                continue
+            if prior[0] - 10 <= center_x <= prior[2] + 10 and prior[1] - 10 <= center_y <= prior[3] + 10:
+                prior_identity, prior_confidence = values[index]
+                prior_suit = prior_identity[1] if len(prior_identity) > 1 and prior_identity[1] in SUIT_MAP.values() else "?"
+                values[index] = (rank + (suit or prior_suit), max(confidence, prior_confidence))
+                matched = True
+                break
+        if matched:
+            continue
+
+        duplicate = None
+        for index, prior in enumerate(boxes):
+            prior_zone, prior_cx, prior_cy = classify_zone(prior, image.size)
+            if prior_zone == zone and abs(cx - prior_cx) < 0.025 and abs(cy - prior_cy) < 0.04:
+                duplicate = index
+                break
+        identity = rank + (suit or "?")
+        if duplicate is not None:
+            if confidence > values[duplicate][1]:
+                values[duplicate] = (identity, confidence)
+            continue
+        boxes.append(box)
+        values.append((identity, confidence))
+
+    return boxes[:18], values[:18]
+
 def classify_zone(box, frame_size):
     width, height = frame_size
     cx = ((box[0] + box[2]) / 2) / max(1, width)
@@ -429,7 +492,7 @@ def make_state(window, image, lines, card_boxes, card_values):
             "box": box,
             "center_normalized": [round(cx, 3), round(cy, 3)],
             "stable": False,
-            "source": "卡牌区域检测 + 卡角文字识别",
+            "source": "牌区轮廓 / 卡角 OCR / 画面文字补全",
         })
     board = [card["candidate"] for card in cards if card["zone"] == "公共牌候选" and "?" not in card["candidate"]]
     hero = [card["candidate"] for card in cards if card["zone"] == "hero候选" and "?" not in card["candidate"]]
@@ -708,6 +771,7 @@ class VisionApp(tk.Tk):
                     x1, y1, x2, y2 = box
                     crop = frame.crop((x1, y1, x2, y2))
                     values.append(read_card_corner(engine, crop, (0, 0, crop.width, crop.height)))
+                boxes, values = augment_card_candidates_from_ocr(frame, lines, boxes, values)
                 state = make_state(window, frame, lines, boxes, values)
                 state["采集方式"] = capture_method
                 self._mark_stability(state["牌局候选"]["牌面区域"])
@@ -815,6 +879,30 @@ def self_check():
     engine = RapidOCR()
     sample = Image.new("RGB", (320, 240), "white")
     engine(np.asarray(sample))
+    probe = Image.new("RGB", (800, 600), (18, 54, 38))
+    fallback_boxes, fallback_values = augment_card_candidates_from_ocr(
+        probe,
+        [
+            {"text": "9", "confidence": 0.95, "box": [356, 440, 376, 472]},
+            {"text": "3", "confidence": 0.93, "box": [407, 438, 429, 472]},
+            {"text": "9", "confidence": 0.94, "box": [357, 441, 376, 473]},
+        ],
+        [],
+        [],
+    )
+    if len(fallback_boxes) != 2 or [value[0] for value in fallback_values] != ["9?", "3?"]:
+        raise RuntimeError("重叠手牌 OCR 补全自检失败")
+    coach_state = {
+        "牌局候选": {
+            "牌面区域": [
+                {"candidate": "9?", "zone": "hero候选", "stable": True, "confidence": 0.95, "center_normalized": [0.46, 0.76]},
+                {"candidate": "3?", "zone": "hero候选", "stable": True, "confidence": 0.93, "center_normalized": [0.52, 0.76]},
+            ],
+            "底池与筹码": [],
+        }
+    }
+    if build_coach_advice(coach_state).get("状态") != "自动分析":
+        raise RuntimeError("识别到两张手牌后教练分析未启动")
     return 0
 
 def main():
