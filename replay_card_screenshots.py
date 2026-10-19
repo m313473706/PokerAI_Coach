@@ -64,6 +64,32 @@ def main():
         detections = find_card_regions(image)
         used = set()
         cards = shot.get("cards", [])
+        has_boxes = [isinstance(card, dict) and "box" in card for card in cards]
+        if any(has_boxes) and not all(has_boxes):
+            raise ValueError(f"{image_name} 的 cards 不能混用带框与不带框格式。")
+
+        if not all(has_boxes):
+            # 简化格式：只写牌值，按定位器返回的从上到下、从左到右顺序对应。
+            labels = [label_code(card if isinstance(card, str) else card["label"]) for card in cards]
+            expected_classes.update(labels)
+            total += len(labels)
+            paired = min(len(labels), len(detections))
+            misses += len(labels) - paired
+            extras += len(detections) - paired
+            for expected, detected_box in zip(labels, detections):
+                prediction, confidence, margin = classify_card_regions(
+                    session, image, [detected_box]
+                )[0]
+                predicted = prediction
+                for symbol, code in (("♣", "C"), ("♦", "D"), ("♥", "H"), ("♠", "S")):
+                    predicted = predicted.replace(symbol, code)
+                is_correct = predicted == expected
+                correct += int(is_correct)
+                low_confidence += int(prediction == "??")
+                rows.append({"image": image_name, "expected": expected, "predicted": predicted,
+                             "confidence": confidence, "margin": margin, "correct": is_correct})
+            continue
+
         for card in cards:
             expected = label_code(card["label"])
             expected_classes.add(expected)
