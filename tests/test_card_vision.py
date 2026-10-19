@@ -35,7 +35,7 @@ def output_row(label, box=(100, 100, 200, 300), top=0.95, second=0.10):
     row[4] = 1.0
     row[5 + CARD_LABELS.index(label)] = top
     row[5 + (CARD_LABELS.index(label) + 1) % 52] = second
-    return row
+    return row.reshape(1, 57)
 
 
 class ModelContractTests(unittest.TestCase):
@@ -81,7 +81,7 @@ class DecoderTests(unittest.TestCase):
         self.assertEqual(boxes, [])
 
     def test_cross_class_overlapping_boxes_are_one_physical_card(self):
-        rows = np.stack((output_row("9C"), output_row("9D")))
+        rows = np.concatenate((output_row("9C"), output_row("9D")), axis=0)
         boxes, values = decode_detections(rows, (640, 640), 1.0, (0, 0))
         self.assertEqual(len(boxes), 1)
         self.assertEqual(len(values), 1)
