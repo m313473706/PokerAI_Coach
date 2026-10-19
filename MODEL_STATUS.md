@@ -26,6 +26,8 @@
 
 ## 候选模型审查
 
+- [farukalamai/realtime-poker-card-detection-jetson](https://github.com/farukalamai/realtime-poker-card-detection-jetson) 仓库标 MIT，包含 52 类 YOLO11s；但其训练笔记本明确从 `yolo11s.pt` 开始，设置 `pretrained=True`，并记录 493/499 个预训练权重被载入。Ultralytics 当前许可说明要求闭源或专有产品使用其自定义/微调 YOLO 模型时取得 Enterprise 许可；该仓库的 MIT 代码许可证不能单独证明模型权重许可闭环。它的运行代码还指向 TensorRT `.engine` 文件，README 面向 Jetson Orin，不能直接作为 Windows CPU ONNX 模型接入，故不采用。
+
 - [koolguy06/playing-cards](https://huggingface.co/koolguy06/playing-cards) 的模型卡声明 MIT，并记录 52 类、约 24,000 张训练图像；它以 YOLOv8l 初始化，权重是 87.7 MB 的 PyTorch `.pt`，模型卡没有提供测试集准确率或逐类指标。
 - 对应的 [Augmented Startups Playing Cards v4](https://universe.roboflow.com/augmented-startups/playing-cards-ow27d/dataset/4) 页面标为 Public Domain，包含 52 类和 1,010 张测试图。这解决了数据集页面的许可声明，但不能证明该模型对本项目模拟器截图的识别效果。
 - Ultralytics 的[官方许可说明](https://www.ultralytics.com/license)明确说 YOLOv8 和由其训练的模型默认采用 AGPL-3.0；非 AGPL 整体分发需要 Enterprise 许可。候选模型卡上的 MIT 标记与其 YOLOv8 来源存在许可冲突风险。仓库没有记录该模型获得单独许可的证据，所以此分支不分发或下载该权重。
