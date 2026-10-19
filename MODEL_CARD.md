@@ -19,21 +19,18 @@
 
 ## 目标模拟器截图回放
 
-`replay_card_screenshots.py` 会运行当前牌框轮廓定位器，再对定位出的牌框分类。输入 manifest 采用 JSON；截图路径相对 manifest，每张牌的 box 是完整牌框坐标：
+`replay_card_screenshots.py` 会运行当前牌框轮廓定位器，再对定位出的牌框分类。创建 JSON 清单，截图路径相对该 JSON；牌值按定位框从上到下、同一行从左到右排列：
 
 ```json
 {
   "screenshots": [
-    {
-      "image": "table_01.png",
-      "cards": [
-        {"label": "9C", "box": [100, 200, 180, 320]},
-        {"label": "3H", "box": [250, 100, 330, 220]}
-      ]
-    }
+    {"image": "table_01.png", "cards": ["3H", "2D", "7C", "9C", "3C"]},
+    {"image": "10C.png", "cards": ["10C"]}
   ]
 }
 ```
+
+如需精确检查轮廓位置，也可用 `{"label":"9C","box":[x1,y1,x2,y2]}` 提供完整牌框的标注坐标。
 
 执行方式：
 
