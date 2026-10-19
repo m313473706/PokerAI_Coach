@@ -18,8 +18,8 @@
 
 - Roboflow v4 页面将版本标为 Public Domain，列出 24,240 张图片、52 类；但官方 Python 包的标准数据集下载流程要求先用账号/API key 登录。因此不能把 Roboflow SDK/CLI 当作无密钥自动下载源，也不能为 CI 擅自添加密钥。
 - 找到一个可能的无密钥镜像：公开 GitHub 仓库 [TeogopK/Playing-Cards-Object-Detection](https://github.com/TeogopK/Playing-Cards-Object-Detection)，固定候选提交为 `6da007263c51cf5a44a3c06ea840030ff72ce678`。其 README 声称 `data/` 下数据集为 CC0，合成集复制自 Kaggle 的 CC0 数据集，含 20,000 张图和 52 类；公开仓库元数据报告约 1.36 GB。仓库还含 YOLOv8 代码与权重，不能把这些训练代码/权重带入本项目。
-- 该镜像提供了可追溯的公开 README/来源声明，但仓库根目录没有独立 LICENSE 文件，数据子集也没有单独的许可清单或已核验 SHA-256。虽然固定 Git commit 可锁定版本，数据文件哈希清单尚未从导出包计算。当前不能据此宣布完整分发授权已闭环。
-- 已新增 [`audit-card-dataset.yml`](.github/workflows/audit-card-dataset.yml)：固定审计上游提交 `6da007263c51cf5a44a3c06ea840030ff72ce678`，只检出 `data/` 和 README，输出逐文件 SHA-256/字节数清单，并检查提交号、README 的 CC0 声明/Kaggle 来源引用、LFS 指针和符号链接。工作流不下载或上传数据集、代码或模型权重，只上传审计 JSON 与哈希清单；它的通过结果只表示机械核对完成，不构成独立法律结论。因为手动触发入口必须先在默认分支存在，这条 draft 分支另有仅在该 workflow 文件变更时触发的一次性入口。模型质量仍需目标模拟器截图回放，本次不生成权重。
+- 该镜像在固定提交的 README 中声明 `data/` 全部为 CC0，并指向 Kaggle 合成数据源；但仓库根目录没有独立 LICENSE 文件，数据文件也没有逐文件授权记录。仅凭上游声明仍不能独立确认每张图和标注的权利来源，因此分发授权链尚未闭环。
+- 已运行 [`audit-card-dataset.yml`](.github/workflows/audit-card-dataset.yml) 的数据审计（[GitHub Actions 运行记录](https://github.com/m313473706/PokerAI_Coach/actions/runs/39206734346)）：锁定提交匹配；`data/` 共 44,346 个文件、804,196,942 字节；未发现 LFS 指针或符号链接；固定 README 中存在 CC0 声明和 Kaggle 来源引用。逐文件 SHA-256 清单与 JSON 报告已作为 `card-dataset-provenance-audit` artifact 保存 30 天。通过只表示提交、文件完整性和来源声明的机械检查成功，不是独立授权结论。该工作流只检出上游 `data/` 与 README，不下载上游训练代码或权重，也不把数据集放入本项目。模型质量仍需目标模拟器截图回放，本次不生成权重。
 
 
 
