@@ -1,58 +1,55 @@
-# 牌面视觉模型状态
+# 牌面视觉识别状态
 
-此分支目前**不是可安装交付版**。它移除了 OCR 牌面推断，并让分析引擎只接受来源标记为“牌面视觉模型”、置信度足够、点数与花色完整且无重复牌的输入。仓库尚无合规的牌面模型，因此当前版本会安全地停止在“等待视觉模型”，不会生成行动建议。
+截至 2026-10-19，本分支已选定并实现**自研、离线的 52 类牌面分类器候选路线**。本分支仍是 Poker AI Coach 1.0 RC 的工作分支，不是可安装交付版。
 
-代码现已把本地 ONNX 适配器接入扫描循环，并对公共牌区与手牌区分别裁切推理，降低整桌缩放导致牌角过小的风险。分析前要求整手牌连续三帧一致，并校验来源、完整牌值、置信度、类别差距、牌局阶段和重复牌。CI 的合成回归只覆盖接口与拒绝条件，不代表模型准确率或目标模拟器实测。
+## 已落地
 
-## 可执行的供模路线评估
+- 使用固定提交 `ae925833a28f587ec6abed561822889eb044a18c` 的 [safe-acid/Playing-cards-assets](https://github.com/safe-acid/Playing-cards-assets) 52 张 CC0 牌面素材。
+- 从随机权重训练自写轻量 CNN；不使用第三方预训练权重或云端识别 API。
+- 导出约定为单张牌框输入、52 类概率输出的 ONNX 模型；应用通过本地 CPU ONNX Runtime 加载。
+- 对截图中的白色牌框做轮廓定位，再逐张裁切分类。低置信度、类别差距不足、重复牌、错误牌局阶段或帧间不稳定都会阻止行动建议。
+- `MODEL_CARD.md` 记录模型结构、数据来源及边界；`Train in-house card classifier` 工作流生成可下载的**候选模型**和训练报告。
+- `replay_card_screenshots.py` 将标注的目标模拟器截图送入实际轮廓定位与分类流程，并生成与模型 SHA-256 绑定的回放报告。
+- Windows 打包现在要求该回放报告确认覆盖全部 52 类、所有牌值正确、没有定位漏检/误检和低置信度；报告哈希必须对应待打包权重。
 
-目前没有找到可直接随此软件分发、且来源与许可链完整的现成权重。已有 YOLO 牌面候选即使模型卡写 MIT，也不能覆盖训练栈/权重本身的许可；Ultralytics 官方说明其训练模型默认属于 AGPL-3.0，闭源分发需要 Enterprise 许可。因此不下载或打包这些权重。
+## 当前交付状态
 
-**可行的无推理 API 路线：独立训练并本地运行。** Roboflow Universe 的 Augmented Startups Playing Cards 数据集页面目前列出 52 类、版本 4 共 24,240 张图片，并将数据集标为 Public Domain。可从该固定版本取得带标注的导出，先保存版本信息、来源页面和文件哈希，再逐项核对导出包的图片/标注许可。用 BSD-3-Clause 的 PyTorch/Torchvision 代码从随机初始化训练 52 类检测器（避免使用 Ultralytics 代码、架构或权重，也不加载来源不明的预训练权重），转换为本项目约定的 640×640、52 类 ONNX 输出并写入许可/来源元数据。应用运行时只用本地 ONNX Runtime，不调用付费识别 API。
+仓库目前没有提交模型权重或真实截图回放报告。训练工作流的 artifact 只是待评估候选模型，不是安装包。**只有训练合成验证准确率不能说明它能识别目标模拟器画面**，Windows 安装器仍会被安全门槛拦下，直到真实截图回放通过。
 
-这是一条**可执行的候选路线，不是已经取得的模型或法律结论**：本仓库目前没有下载数据、训练脚本、权重或逐图授权清单；训练权重及数据版本审查完成之前仍不能分发。训练完成后还必须用目标模拟器真实截图做像素回放，覆盖牌点花色、牌区裁切、不同缩放、遮挡、低置信度和牌局阶段；现有 7 项合成测试只验证软件契约。
+### 截图回放清单格式
 
-若优先要更快拿到现成权重，另一条路线是向权重作者取得书面分发授权，明确覆盖模型文件、训练数据来源、随安装器再分发和本地离线使用；没有授权原件及权重哈希前，仍不接入发行包。
+创建 JSON 清单，截图路径相对该 JSON；每张牌填写完整牌框坐标和牌值，例如：
 
-## 固定数据源核查结果（2026-10-19）
+```json
+{
+  "screenshots": [
+    {
+      "image": "table_01.png",
+      "cards": [
+        {"label": "9C", "box": [100, 200, 180, 320]},
+        {"label": "3H", "box": [250, 100, 330, 220]}
+      ]
+    }
+  ]
+}
+```
 
-- Roboflow v4 页面将版本标为 Public Domain，列出 24,240 张图片、52 类；但官方 Python 包的标准数据集下载流程要求先用账号/API key 登录。因此不能把 Roboflow SDK/CLI 当作无密钥自动下载源，也不能为 CI 擅自添加密钥。
-- 找到一个可能的无密钥镜像：公开 GitHub 仓库 [TeogopK/Playing-Cards-Object-Detection](https://github.com/TeogopK/Playing-Cards-Object-Detection)，固定候选提交为 `6da007263c51cf5a44a3c06ea840030ff72ce678`。其 README 声称 `data/` 下数据集为 CC0，合成集复制自 Kaggle 的 CC0 数据集，含 20,000 张图和 52 类；公开仓库元数据报告约 1.36 GB。仓库还含 YOLOv8 代码与权重，不能把这些训练代码/权重带入本项目。
-- 该镜像在固定提交的 README 中声明 `data/` 全部为 CC0，并指向 Kaggle 合成数据源；但仓库根目录没有独立 LICENSE 文件，数据文件也没有逐文件授权记录。仅凭上游声明仍不能独立确认每张图和标注的权利来源，因此分发授权链尚未闭环。
-- 已运行 [`audit-card-dataset.yml`](.github/workflows/audit-card-dataset.yml) 的数据审计（[GitHub Actions 运行记录](https://github.com/m313473706/PokerAI_Coach/actions/runs/39206734346)）：锁定提交匹配；`data/` 共 44,346 个文件、804,196,942 字节；未发现 LFS 指针或符号链接；固定 README 中存在 CC0 声明和 Kaggle 来源引用。逐文件 SHA-256 清单与 JSON 报告已作为 `card-dataset-provenance-audit` artifact 保存 30 天。通过只表示提交、文件完整性和来源声明的机械检查成功，不是独立授权结论。该工作流只检出上游 `data/` 与 README，不下载上游训练代码或权重，也不把数据集放入本项目。模型质量仍需目标模拟器截图回放，本次不生成权重。
+用 52 张不同牌的目标模拟器实截图回放：
 
+```powershell
+python replay_card_screenshots.py --manifest path\to\manifest.json --model models\playing_cards.onnx --report models\real_replay_report.json
+```
 
+标注框必须包住截图中的整张牌。工具会检查轮廓定位是否覆盖标注框，并把定位结果送入分类器。报告通过条件为至少 52 张牌、完整覆盖 52 类，并且每张牌都正确、无漏检、无额外牌框且未触发低置信度拒绝。之后 Windows workflow 会再核对报告与 ONNX 权重的 SHA-256。
 
+## 运行与 API
 
-## 候选模型审查
+- 运行时不调用远程视觉 API，不需要按张付费；识牌在本机 CPU 上完成。
+- 训练只通过 GitHub Actions 取固定版本 CC0 素材并导出候选权重；是否需要考虑 Actions 额度取决于 GitHub 账号方案。
+- 候选权重目前不会自动进入仓库或安装器，避免把未经真实截图验证的模型当成 RC 发布。
 
-- [miguel-kjh/card-detector](https://github.com/miguel-kjh/card-detector) 是 53 类整牌图像分类器；README 报告其自建 CNN 从随机初始化训练测试准确率 70.57%，另有基于 ImageNet 预训练 ResNet18 的 97.36% 结果。GitHub 文件列表没有 LICENSE，仓库也没有提供可直接分发的训练权重；数据来自另一个 Kaggle 数据集。它是分类器而非牌框检测器，报告数字只对应其测试集，不代表扑克软件截图表现，因此不采用。
+## 尚待完成
 
-- [osos3lom/baloot-fan-v2](https://huggingface.co/osos3lom/baloot-fan-v2) 的模型卡标 MIT 并提供 ONNX，但它基于 Ultralytics YOLO11，类别是沙特 Baloot 的 32 张牌加一类 other，不是完整 52 类德州扑克牌集；其模型卡还指向此前未通过底层素材授权核查的 JackFurby 数据集。MIT 元数据不能单独闭合训练栈与数据来源许可链，类别也不匹配，故不采用。
-
-- 找到可作自有训练素材的 [OpenDecks CC0 牌面资源](https://github.com/hhonbo/OpenDecks-Public-Domain-and-CC0-Playing-Cards)：仓库逐项列出牌面素材来源并声明所有牌面资源为 CC0，可商业使用和再分发。后续可基于这些素材生成变换样本，用自写轻量网络从随机初始化训练 52 类分类器，避免继承第三方权重许可。但这不是现成模型；现有 ONNX 契约是检测器格式，还要设计牌框定位/裁切、类别输出和模型元数据，再以目标模拟器截图验证泛化。只有完整回放通过后才可进入安装器。
-
-
-- [farukalamai/realtime-poker-card-detection-jetson](https://github.com/farukalamai/realtime-poker-card-detection-jetson) 仓库标 MIT，包含 52 类 YOLO11s；但其训练笔记本明确从 `yolo11s.pt` 开始，设置 `pretrained=True`，并记录 493/499 个预训练权重被载入。Ultralytics 当前许可说明要求闭源或专有产品使用其自定义/微调 YOLO 模型时取得 Enterprise 许可；该仓库的 MIT 代码许可证不能单独证明模型权重许可闭环。它的运行代码还指向 TensorRT `.engine` 文件，README 面向 Jetson Orin，不能直接作为 Windows CPU ONNX 模型接入，故不采用。
-
-- [koolguy06/playing-cards](https://huggingface.co/koolguy06/playing-cards) 的模型卡声明 MIT，并记录 52 类、约 24,000 张训练图像；它以 YOLOv8l 初始化，权重是 87.7 MB 的 PyTorch `.pt`，模型卡没有提供测试集准确率或逐类指标。
-- 对应的 [Augmented Startups Playing Cards v4](https://universe.roboflow.com/augmented-startups/playing-cards-ow27d/dataset/4) 页面标为 Public Domain，包含 52 类和 1,010 张测试图。这解决了数据集页面的许可声明，但不能证明该模型对本项目模拟器截图的识别效果。
-- Ultralytics 的[官方许可说明](https://www.ultralytics.com/license)明确说 YOLOv8 和由其训练的模型默认采用 AGPL-3.0；非 AGPL 整体分发需要 Enterprise 许可。候选模型卡上的 MIT 标记与其 YOLOv8 来源存在许可冲突风险。仓库没有记录该模型获得单独许可的证据，所以此分支不分发或下载该权重。
-
-- [Daveokw/Card-Identifier](https://github.com/Daveokw/Card-Identifier) 仓库内含 53 类 ResNet18 ONNX 文件，适合单张完整卡牌分类；GitHub 仓库没有声明许可证，README 也说明遮挡和训练集差异可能导致错误，因此不能直接随安装器分发或视作本项目的已验证识别器。
-- [MODAJ18/Playing_Cards](https://github.com/MODAJ18/Playing_Cards) 声明 MIT，但依赖 YOLOv5，模型权重需另行下载且不在仓库中；项目还包含 YOLOv5 源码及其 GPL-3.0 许可证。尚无完整权重来源链或本项目截图验证，故不采用。
-- [The-Pavels/card-reader](https://github.com/The-Pavels/card-reader) 声明代码与数据集为 MIT，包含 52 类 YOLO11 权重；README 报告合成验证集 mAP50 0.992、mAP50-95 0.911，并提醒未见背景/角度会降级。作者注明 AGPL-3.0 适用于检测栈，并认为可能适用于训练权重；Ultralytics 官方也将其训练模型默认列为 AGPL-3.0。仓库没有可核实的额外授权，也没有本项目模拟器截图结果，故不采用。
-
-- [Ximilar-com/cardstream](https://github.com/Ximilar-com/cardstream) 提供 Apache-2.0 的卡牌分割与同卡 embedding 权重（模型页列出 SHA-256），可作为定位/裁切组件；但项目 README 明确用付费 Ximilar API 做卡牌身份识别，本地权重本身不输出 52 张标准牌的点数/花色，因此不能直接满足离线 Windows 识别交付。它可作为自研识别器的候选定位组件，仍需单独做兼容性回放。
-
-- [JackFurby/playing-cards](https://huggingface.co/datasets/JackFurby/playing-cards) 的 Hugging Face 数据卡标 MIT，包含四组各约 10,000 张合成图；数据卡注明牌面素材来自 Openclipart，背景来自 Oxford DTD。Openclipart 说明作品采用 CC0，但 Oxford DTD 官方页面只将数据描述为供计算机视觉研究使用，没有给出本项目所需的明确商业再分发授权。MIT 元数据本身不能消除底层素材授权问题，因此暂不把它作为分发权重的训练源；其随机纹理背景也与目标模拟器画面不同。
-
-## 仍需完成的验收
-
-1. 选定并核实适用于该应用分发方式的权重许可及完整来源链。
-2. 将兼容 ONNX Runtime 的模型固定版本、校验哈希并随安装器离线打包。
-3. 使用用户之前提供的模拟器截图做回放预测，覆盖 9♣/3♣ 与 3♥/2♦/7♣、10♣/3♥、K♣/Q♣，检查置信度、手牌重叠、重复牌与牌局状态。
-4. Windows CI 先运行合成契约回归；由于目前没有合规模型或真实截图样例，之后仍必须在模型检查处失败，不能生成安装器。模型与真实回放样例补齐后，CI 才能验证像素识别并进入打包。
-5. 由用户在真实模拟器中完成现场验证；CI 无法替代这一步。
-
-上游对话仍有截图附件条目，但这次任务环境无法读取附件文件本身。已知牌值文本不能代替模型的像素级回放测试。
+1. 运行修复后的训练 workflow，检查模型文件、训练报告和 ONNX 元数据。
+2. 获取目标扑克模拟器 52 类实截图及标注，运行像素级回放并按错误结果改进定位或训练增强。
+3. 在本机目标电脑运行最终模型和完整 UI；通过 Windows 自检、回放门槛及实际桌面验证后，才形成 1.0 RC 候选交付。
