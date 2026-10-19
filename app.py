@@ -20,7 +20,7 @@ try:
     from PIL import Image, ImageDraw, ImageEnhance, ImageGrab, ImageTk
     from rapidocr_onnxruntime import RapidOCR
     from card_vision import (
-        MODEL_SOURCE, CardVisionError, TableStateGate, detect_table_cards,
+        MODEL_SOURCE, CardVisionError, TableStateGate, classify_card_regions,
         load_card_model, validate_analysis_gate, inspect_table_state,
     )
 except Exception as exc:
@@ -677,10 +677,11 @@ class VisionApp(tk.Tk):
                     frame = capture_window(window)
                     capture_method = "窗口绘制 / 桌面区域回退"
                 lines = ocr_lines(engine, frame)
+                boxes = find_card_regions(frame)
                 if card_model is not None:
-                    boxes, values = detect_table_cards(card_model, frame)
+                    values = classify_card_regions(card_model, frame, boxes)
                 else:
-                    boxes, values = find_unclassified_card_regions(frame)
+                    values = [("??", 0.0, 0.0) for _ in boxes]
                 state = make_state(window, frame, lines, boxes, values, model_available=card_model is not None)
                 state["采集方式"] = capture_method
                 gate_state = table_gate.update(state["牌局候选"]["牌面区域"])
