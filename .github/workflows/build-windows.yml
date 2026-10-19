@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, windows-screen-capture-vision, windows-visual-card-recognition ]
+  pull_request:
+    branches: [ main ]
 
 permissions:
   contents: read
