@@ -778,6 +778,11 @@ class VisionApp(tk.Tk):
 def self_check():
     if IMPORT_ERROR:
         raise RuntimeError(f"视觉组件加载失败：{IMPORT_ERROR}")
+    require_model = "--require-model" in sys.argv
+    packaged = bool(getattr(sys, "_MEIPASS", None))
+    source_model = Path("models/playing_cards.onnx").is_file()
+    if require_model or packaged or source_model:
+        load_card_model(required=True)
     if WindowsCapture is None:
         raise RuntimeError(f"Windows 图形捕获组件加载失败：{WINDOWS_CAPTURE_IMPORT_ERROR}")
     blank = Image.new("RGB", (96, 72), (0, 0, 0))
