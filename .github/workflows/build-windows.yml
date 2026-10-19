@@ -37,12 +37,35 @@ jobs:
       - name: 验证牌面安全状态
         run: python app.py --self-check
 
-      - name: 检查视觉模型文件
+      - name: 检查牌面模型与真实截图回放报告
         shell: pwsh
         run: |
           $model = "models/playing_cards.onnx"
+          $replayPath = "models/real_replay_report.json"
           if (!(Test-Path -LiteralPath $model)) {
             throw "未提供许可已核实的 models/playing_cards.onnx；拒绝打包 OCR-only 安装器。"
+          }
+          if (!(Test-Path -LiteralPath $replayPath)) {
+            throw "缺少 models/real_replay_report.json；必须先完成目标模拟器截图回放。"
+          }
+          $report = Get-Content -Raw -LiteralPath $replayPath | ConvertFrom-Json
+          if ($report.schema -ne "pokerai-real-replay-v1" -or $report.status -ne "passed") {
+            throw "真实截图回放报告格式无效或状态不是 passed。"
+          }
+          $modelHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $model).Hash.ToLowerInvariant()
+          if ("$($report.model_sha256)".ToLowerInvariant() -ne $modelHash) {
+            throw "回放报告中的模型 SHA-256 与待打包模型不一致。"
+          }
+          $classes = @($report.expected_classes)
+          $uniqueClasses = @($classes | Sort-Object -Unique)
+          if ([int]$report.total_cards -lt 52 -or
+              [int]$report.correct_cards -ne [int]$report.total_cards -or
+              [int]$report.distinct_expected_classes -ne 52 -or
+              $classes.Count -ne 52 -or $uniqueClasses.Count -ne 52 -or
+              [int]$report.detection_misses -ne 0 -or
+              [int]$report.spurious_detections -ne 0 -or
+              [int]$report.low_confidence_count -ne 0) {
+            throw "回放未覆盖全部 52 类并实现零漏检、零误检、零低置信度与全牌值正确。"
           }
 
       - name: 打包 Windows 程序
