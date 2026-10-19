@@ -19,6 +19,10 @@ try:
     import numpy as np
     from PIL import Image, ImageDraw, ImageEnhance, ImageGrab, ImageTk
     from rapidocr_onnxruntime import RapidOCR
+    from card_vision import (
+        MODEL_SOURCE, CardVisionError, TableStateGate, detect_table_cards,
+        load_card_model, validate_analysis_gate, inspect_table_state,
+    )
 except Exception as exc:
     IMPORT_ERROR = exc
 
@@ -394,19 +398,23 @@ def extract_action_candidates(lines):
             found.append({"text": line["text"], "confidence": line["confidence"], "box": line["box"]})
     return found
 
-def make_state(window, image, lines, card_boxes, card_values):
+def make_state(window, image, lines, card_boxes, card_values, model_available=False):
     frame_w, frame_h = image.size
     cards = []
-    for box, (identity, confidence) in zip(card_boxes, card_values):
+    for box, values in zip(card_boxes, card_values):
+        identity, confidence = values[0], values[1]
+        margin = values[2] if len(values) > 2 else 0.0
         zone, cx, cy = classify_zone(box, image.size)
+        source = MODEL_SOURCE if model_available and identity != "??" else "轮廓候选；尚无牌面视觉模型"
         cards.append({
             "candidate": identity,
             "zone": zone,
-            "confidence": round(confidence, 3),
+            "confidence": round(float(confidence), 3),
+            "margin": round(float(margin), 3),
             "box": box,
             "center_normalized": [round(cx, 3), round(cy, 3)],
             "stable": False,
-            "source": "轮廓候选；尚无牌面视觉模型",
+            "source": source,
         })
     board = [card["candidate"] for card in cards if card["zone"] == "公共牌候选" and "?" not in card["candidate"]]
     hero = [card["candidate"] for card in cards if card["zone"] == "hero候选" and "?" not in card["candidate"]]
@@ -415,6 +423,7 @@ def make_state(window, image, lines, card_boxes, card_values):
         "采集时间": datetime.now().astimezone().isoformat(timespec="seconds"),
         "目标窗口": {"标题": window.title, "窗口类名": window.class_name},
         "画面": {"宽度": frame_w, "高度": frame_h},
+        "视觉模型状态": "已加载" if model_available else "缺失",
         "牌局候选": {
             "阶段": {"值": street, "状态": "根据公共牌区域候选数量推断" if street != "待识别" else "证据不足"},
             "公共牌": {"候选": board, "状态": "视觉候选，需结合目标模拟器验证"},
@@ -424,42 +433,30 @@ def make_state(window, image, lines, card_boxes, card_values):
             "行动文字": extract_action_candidates(lines),
         },
         "画面文字": lines,
-        "说明": "本程序只在屏幕识别稳定后计算牌型和胜率；信息不足时等待，不猜牌或给出动作建议。",
+        "说明": "只接受连续稳定且来源可信的完整牌面；本地模型或识别信息不足时不生成行动建议。",
     }
 
-def build_coach_advice(state):
+
+def build_coach_advice(state, gate_state=None):
     table = state.get("牌局候选", {})
     cards = table.get("牌面区域", [])
-    observed_zones = ("hero候选", "公共牌候选")
-    if any(card.get("zone") in observed_zones and card.get("source") != "牌面视觉模型" for card in cards):
+    model_status = state.get("视觉模型状态")
+    if model_status is None:
+        relevant = [card for card in cards if card.get("zone") in ("hero候选", "公共牌候选")]
+        model_status = "已加载" if relevant and all(card.get("source") == MODEL_SOURCE for card in relevant) else "缺失"
+    if model_status != "已加载":
         return {"状态": "牌面视觉模型缺失", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
-                "建议": "当前只有牌区轮廓，没有牌面视觉分类结果；OCR 不参与识牌，暂不生成行动建议。"}
-    hero_rows = sorted(
-        [card for card in cards if card.get("zone") == "hero候选" and card.get("stable")],
-        key=lambda card: card.get("center_normalized", [0, 0])[0],
-    )
-    board_rows = sorted(
-        [card for card in cards if card.get("zone") == "公共牌候选" and card.get("stable")],
-        key=lambda card: card.get("center_normalized", [0, 0])[0],
-    )
-    if len(hero_rows) != 2:
-        return {"状态": "等待识别", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
-                "建议": "等待屏幕稳定识别到两张自己的手牌。"}
-    if len(board_rows) not in (0, 3, 4, 5):
-        return {"状态": "等待牌面稳定", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
-                "建议": "公共牌数量尚未稳定，暂不生成建议。"}
-
-    selected = hero_rows + board_rows
-    card_code = re.compile(r"^(10|[2-9TJQKA])[♠♥♦♣]$")
-    if any(card.get("confidence", 0) < 0.65 or not card_code.fullmatch(str(card.get("candidate", "")))
-           for card in selected):
-        return {"状态": "识别置信度不足", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
-                "建议": "牌面点数或花色尚未可靠识别；暂不猜测牌值或生成行动建议。"}
+                "建议": "没有通过许可与模型契约检查的本地牌面模型；暂不生成行动建议。"}
+    inspection = validate_analysis_gate(cards, gate_state)
+    if not inspection.get("valid"):
+        status = inspection.get("status", "等待识别")
+        reason = inspection.get("reason") or "当前牌面未通过安全校验。"
+        return {"状态": status, "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
+                "建议": reason + " 暂不生成行动建议。"}
+    hero_rows = inspection["hero"]
+    board_rows = inspection["board"]
     hole = [card["candidate"] for card in hero_rows]
     board = [card["candidate"] for card in board_rows]
-    if len(set(hole + board)) != len(hole + board):
-        return {"状态": "牌面冲突", "牌型": "—", "对随机手牌胜率": "—", "底池赔率": "—",
-                "建议": "检测到重复牌，暂不分析；请等待视觉识别稳定。"}
     try:
         equity_result = estimate_equity(hole, board, iterations=400)
         equity = equity_result["equity"]
@@ -541,7 +538,6 @@ class VisionApp(tk.Tk):
         self.thread = None
         self.last_state = None
         self.last_image = None
-        self.card_history = {}
         self._build()
         self.refresh_windows()
         self.after(120, self._poll_messages)
@@ -614,7 +610,6 @@ class VisionApp(tk.Tk):
             messagebox.showerror("视觉组件未能加载", str(IMPORT_ERROR))
             return
         self.stop_event.clear()
-        self.card_history.clear()
         self.thread = threading.Thread(target=self._scan_loop, args=(window,), daemon=True)
         self.thread.start()
         self.start_button.config(state="disabled")
@@ -640,28 +635,26 @@ class VisionApp(tk.Tk):
             except queue.Full:
                 pass
 
-    def _mark_stability(self, cards):
-        for card in cards:
-            cx, cy = card["center_normalized"]
-            key = (card["zone"], round(cx / 0.045), round(cy / 0.06))
-            history = self.card_history.setdefault(key, [])
-            history.append(card["candidate"])
-            del history[:-5]
-            card["stable"] = card["candidate"] != "??" and history.count(card["candidate"]) >= 3
-            if card["stable"]:
-                card["状态"] = "连续帧稳定候选"
-            else:
-                card["状态"] = "单帧或未稳定候选"
-
     def _scan_loop(self, window):
         graphics_capture = None
         try:
             engine = RapidOCR()
+            model_error = None
+            try:
+                card_model = load_card_model(required=False)
+            except CardVisionError as exc:
+                card_model = None
+                model_error = str(exc)
+            table_gate = TableStateGate(required_frames=3)
             try:
                 graphics_capture = _GraphicsWindowCapture(window.handle)
             except Exception as exc:
                 self._offer(("status", f"目标窗口图形捕获不可用，将尝试兼容采集：{exc}"))
-            self._offer(("status", "正在采集牌桌；当前构建未配置牌面视觉模型，只读取金额与操作文字。"))
+            if card_model is None:
+                detail = f"；模型拒绝原因：{model_error}" if model_error else ""
+                self._offer(("status", "本地牌面模型不可用，暂只读取金额与操作文字，等待合规模型。" + detail))
+            else:
+                self._offer(("status", "本地 CPU 牌面模型已加载；正在采集并等待整手牌连续三帧一致。"))
             while not self.stop_event.is_set():
                 started = time.monotonic()
                 frame = None
@@ -684,11 +677,15 @@ class VisionApp(tk.Tk):
                     frame = capture_window(window)
                     capture_method = "窗口绘制 / 桌面区域回退"
                 lines = ocr_lines(engine, frame)
-                boxes, values = find_unclassified_card_regions(frame)
-                state = make_state(window, frame, lines, boxes, values)
+                if card_model is not None:
+                    boxes, values = detect_table_cards(card_model, frame)
+                else:
+                    boxes, values = find_unclassified_card_regions(frame)
+                state = make_state(window, frame, lines, boxes, values, model_available=card_model is not None)
                 state["采集方式"] = capture_method
-                self._mark_stability(state["牌局候选"]["牌面区域"])
-                state["教练分析"] = build_coach_advice(state)
+                gate_state = table_gate.update(state["牌局候选"]["牌面区域"])
+                state["牌局候选"]["帧间校验"] = gate_state
+                state["教练分析"] = build_coach_advice(state, gate_state)
                 annotated = annotate_image(frame, state)
                 self._offer(("frame", annotated, state))
                 elapsed = time.monotonic() - started
@@ -801,17 +798,26 @@ def self_check():
     if build_coach_advice(unsafe_state).get("状态") != "牌面视觉模型缺失":
         raise RuntimeError("OCR 牌值被误用于生成行动建议")
 
-    duplicate_state = {
-        "牌局候选": {
-            "牌面区域": [
-                {"candidate": "9♣", "zone": "hero候选", "stable": True, "confidence": 0.95, "source": "牌面视觉模型", "center_normalized": [0.46, 0.76]},
-                {"candidate": "9♣", "zone": "hero候选", "stable": True, "confidence": 0.93, "source": "牌面视觉模型", "center_normalized": [0.52, 0.76]},
-            ],
-            "底池与筹码": [],
-        }
-    }
-    if build_coach_advice(duplicate_state).get("状态") != "牌面冲突":
+    duplicate_cards = [
+        {"candidate": "9♣", "zone": "hero候选", "stable": True, "confidence": 0.95, "margin": 0.8, "source": MODEL_SOURCE, "center_normalized": [0.46, 0.76]},
+        {"candidate": "9♣", "zone": "hero候选", "stable": True, "confidence": 0.93, "margin": 0.7, "source": MODEL_SOURCE, "center_normalized": [0.52, 0.76]},
+    ]
+    if inspect_table_state(duplicate_cards).get("status") != "牌面冲突":
         raise RuntimeError("重复牌未阻止行动建议")
+
+    stable_cards = [
+        {"candidate": "9♣", "zone": "hero候选", "confidence": 0.95, "margin": 0.8, "source": MODEL_SOURCE, "center_normalized": [0.46, 0.76]},
+        {"candidate": "3♣", "zone": "hero候选", "confidence": 0.93, "margin": 0.7, "source": MODEL_SOURCE, "center_normalized": [0.52, 0.76]},
+        {"candidate": "3♥", "zone": "公共牌候选", "confidence": 0.94, "margin": 0.8, "source": MODEL_SOURCE, "center_normalized": [0.41, 0.44]},
+        {"candidate": "2♦", "zone": "公共牌候选", "confidence": 0.93, "margin": 0.7, "source": MODEL_SOURCE, "center_normalized": [0.50, 0.44]},
+        {"candidate": "7♣", "zone": "公共牌候选", "confidence": 0.92, "margin": 0.7, "source": MODEL_SOURCE, "center_normalized": [0.59, 0.44]},
+    ]
+    gate = TableStateGate(required_frames=3)
+    gate_state = None
+    for _ in range(3):
+        gate_state = gate.update([dict(card) for card in stable_cards])
+    if not gate_state.get("通过") or not validate_analysis_gate(stable_cards, gate_state).get("valid"):
+        raise RuntimeError("整手牌连续帧门控自检失败")
     return 0
 
 
