@@ -171,9 +171,9 @@ def decode_detections(raw_output, image_size, scale, padding, confidence_thresho
     candidates.sort(key=lambda item: item["confidence"], reverse=True)
     kept = []
     for candidate in candidates:
+        # 同一实体牌不能因模型给出不同类别的重叠框而被计作两张牌。
         if any(
-            candidate["class_id"] == prior["class_id"]
-            and intersection_over_union(candidate["box"], prior["box"]) >= nms_threshold
+            intersection_over_union(candidate["box"], prior["box"]) >= nms_threshold
             for prior in kept
         ):
             continue
@@ -213,6 +213,27 @@ def detect_cards(session, image):
         output, (image_width, image_height), scale, (pad_x, pad_y)
     )
 
+
+
+def detect_table_cards(session, image):
+    """分别推理公共牌区和手牌区，减少全桌缩放造成的小牌角信息损失。"""
+    width, height = image.size
+    regions = (
+        (0.18, 0.27, 0.82, 0.62),  # 公共牌区域
+        (0.24, 0.62, 0.76, 1.00),  # 自己的手牌区域
+    )
+    all_boxes, all_values = [], []
+    for left, top, right, bottom in regions:
+        x1, y1 = int(width * left), int(height * top)
+        x2, y2 = int(width * right), int(height * bottom)
+        if x2 - x1 < 80 or y2 - y1 < 50:
+            continue
+        crop = image.crop((x1, y1, x2, y2))
+        boxes, values = detect_cards(session, crop)
+        for box, value in zip(boxes, values):
+            all_boxes.append([box[0] + x1, box[1] + y1, box[2] + x1, box[3] + y1])
+            all_values.append(value)
+    return all_boxes, all_values
 
 def inspect_table_state(cards, confidence_threshold=MIN_CONFIDENCE, margin_threshold=MIN_CLASS_MARGIN):
     """检查牌点来源、置信度、张数、牌局阶段与重复牌。"""
