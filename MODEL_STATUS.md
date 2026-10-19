@@ -26,6 +26,13 @@
 
 ## 候选模型审查
 
+- [miguel-kjh/card-detector](https://github.com/miguel-kjh/card-detector) 是 53 类整牌图像分类器；README 报告其自建 CNN 从随机初始化训练测试准确率 70.57%，另有基于 ImageNet 预训练 ResNet18 的 97.36% 结果。GitHub 文件列表没有 LICENSE，仓库也没有提供可直接分发的训练权重；数据来自另一个 Kaggle 数据集。它是分类器而非牌框检测器，报告数字只对应其测试集，不代表扑克软件截图表现，因此不采用。
+
+- [osos3lom/baloot-fan-v2](https://huggingface.co/osos3lom/baloot-fan-v2) 的模型卡标 MIT 并提供 ONNX，但它基于 Ultralytics YOLO11，类别是沙特 Baloot 的 32 张牌加一类 other，不是完整 52 类德州扑克牌集；其模型卡还指向此前未通过底层素材授权核查的 JackFurby 数据集。MIT 元数据不能单独闭合训练栈与数据来源许可链，类别也不匹配，故不采用。
+
+- 找到可作自有训练素材的 [OpenDecks CC0 牌面资源](https://github.com/hhonbo/OpenDecks-Public-Domain-and-CC0-Playing-Cards)：仓库逐项列出牌面素材来源并声明所有牌面资源为 CC0，可商业使用和再分发。后续可基于这些素材生成变换样本，用自写轻量网络从随机初始化训练 52 类分类器，避免继承第三方权重许可。但这不是现成模型；现有 ONNX 契约是检测器格式，还要设计牌框定位/裁切、类别输出和模型元数据，再以目标模拟器截图验证泛化。只有完整回放通过后才可进入安装器。
+
+
 - [farukalamai/realtime-poker-card-detection-jetson](https://github.com/farukalamai/realtime-poker-card-detection-jetson) 仓库标 MIT，包含 52 类 YOLO11s；但其训练笔记本明确从 `yolo11s.pt` 开始，设置 `pretrained=True`，并记录 493/499 个预训练权重被载入。Ultralytics 当前许可说明要求闭源或专有产品使用其自定义/微调 YOLO 模型时取得 Enterprise 许可；该仓库的 MIT 代码许可证不能单独证明模型权重许可闭环。它的运行代码还指向 TensorRT `.engine` 文件，README 面向 Jetson Orin，不能直接作为 Windows CPU ONNX 模型接入，故不采用。
 
 - [koolguy06/playing-cards](https://huggingface.co/koolguy06/playing-cards) 的模型卡声明 MIT，并记录 52 类、约 24,000 张训练图像；它以 YOLOv8l 初始化，权重是 87.7 MB 的 PyTorch `.pt`，模型卡没有提供测试集准确率或逐类指标。
