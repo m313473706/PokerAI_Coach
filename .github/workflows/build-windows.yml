@@ -64,7 +64,7 @@ jobs:
           if (!(Test-Path "dist/PokerAI_Coach.exe")) { throw "未生成 PokerAI_Coach.exe" }
           $diagnostic = Join-Path $env:TEMP "PokerAI_Coach_self_check_error.txt"
           if (Test-Path $diagnostic) { Remove-Item -LiteralPath $diagnostic -Force }
-          $process = Start-Process -FilePath "dist/PokerAI_Coach.exe" -ArgumentList "--self-check" -Wait -PassThru
+          $process = Start-Process -FilePath "dist/PokerAI_Coach.exe" -ArgumentList "--self-check --require-model" -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             if (Test-Path $diagnostic) {
               Write-Host "程序自检诊断："
