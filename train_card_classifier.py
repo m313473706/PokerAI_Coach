@@ -27,7 +27,7 @@ MODEL_LICENSE_URL = "https://creativecommons.org/publicdomain/zero/1.0/legalcode
 
 
 def parse_card_path(path):
-    match = re.fullmatch(r"(A|[2-9]|10|J|Q|K)_(clubs|diamonds|hearts|spades)", path.stem, re.IGNORECASE)
+    match = re.fullmatch(r"(A|[2-9]|10|J|Q|K)_+(clubs|diamonds|hearts|spades)", path.stem, re.IGNORECASE)
     if not match:
         return None
     rank, suit = match.groups()
