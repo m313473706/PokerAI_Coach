@@ -3,6 +3,7 @@ import json
 import unittest
 
 import numpy as np
+from PIL import Image
 
 from card_vision import (
     CARD_LABELS,
@@ -10,7 +11,7 @@ from card_vision import (
     MODEL_SCHEMA,
     TableStateGate,
     CardVisionError,
-    decode_detections,
+    classify_card_regions,
     inspect_table_state,
     validate_analysis_gate,
     validate_model_contract,
@@ -29,13 +30,33 @@ def card(candidate, zone, x, confidence=0.95, margin=0.8, source="牌面视觉�
     }
 
 
-def output_row(label, box=(100, 100, 200, 300), top=0.95, second=0.10):
-    row = np.zeros(57, dtype=np.float32)
-    row[:4] = box
-    row[4] = 1.0
-    row[5 + CARD_LABELS.index(label)] = top
-    row[5 + (CARD_LABELS.index(label) + 1) % 52] = second
-    return row.reshape(1, 57)
+def probability_row(label, top=0.95, second=0.01):
+    row = np.zeros((1, len(CARD_LABELS)), dtype=np.float32)
+    index = CARD_LABELS.index(label)
+    row[0, index] = top
+    row[0, (index + 1) % len(CARD_LABELS)] = second
+    row[0, (index + 2) % len(CARD_LABELS)] = 1.0 - top - second
+    return row
+
+
+class FakeSession:
+    class Item:
+        def __init__(self, name):
+            self.name = name
+            self.shape = [1, 3, 192, 128]
+
+    def __init__(self, probabilities):
+        self.probabilities = probabilities
+
+    def get_inputs(self):
+        return [self.Item("card_crop")]
+
+    def get_outputs(self):
+        return [self.Item("class_probabilities")]
+
+    def run(self, output_names, feeds):
+        self.assertion = (output_names, feeds)
+        return [self.probabilities]
 
 
 class ModelContractTests(unittest.TestCase):
@@ -43,48 +64,42 @@ class ModelContractTests(unittest.TestCase):
         return {
             "pokerai_schema": MODEL_SCHEMA,
             "class_labels": json.dumps(CARD_LABELS),
-            "license": "MIT",
+            "license": "CC0-1.0",
             "source_url": "https://example.org/model",
             "license_url": "https://example.org/license",
         }
 
-    def test_accepts_fixed_52_class_contract(self):
+    def test_accepts_fixed_52_class_crop_classifier_contract(self):
         self.assertTrue(validate_model_contract(
-            self.metadata(), [1, 3, 640, 640], [1, "N", 57]
+            self.metadata(), [1, 3, 192, 128], [1, 52]
         ))
 
-    def test_rejects_unverified_or_mismatched_license_and_labels(self):
+    def test_rejects_unverified_license_and_mismatched_labels(self):
         metadata = self.metadata()
         metadata["license"] = "AGPL-3.0"
         with self.assertRaises(CardVisionError):
-            validate_model_contract(metadata, [1, 3, 640, 640], [1, "N", 57])
+            validate_model_contract(metadata, [1, 3, 192, 128], [1, 52])
         metadata = self.metadata()
         metadata["class_labels"] = json.dumps(list(reversed(CARD_LABELS)))
         with self.assertRaises(CardVisionError):
-            validate_model_contract(metadata, [1, 3, 640, 640], [1, "N", 57])
+            validate_model_contract(metadata, [1, 3, 192, 128], [1, 52])
 
 
-class DecoderTests(unittest.TestCase):
-    def test_decodes_rank_suit_confidence_margin_and_coordinates(self):
-        boxes, values = decode_detections(
-            output_row("9C"), (640, 640), 1.0, (0, 0)
-        )
-        self.assertEqual(len(boxes), 1)
+class CropClassifierTests(unittest.TestCase):
+    def test_classifies_card_crop_and_returns_confidence_margin(self):
+        session = FakeSession(probability_row("9C"))
+        image = Image.new("RGB", (100, 100), "white")
+        values = classify_card_regions(session, image, [[10, 10, 90, 90]])
+        self.assertEqual(len(values), 1)
         self.assertEqual(values[0][0], "9♣")
         self.assertAlmostEqual(values[0][1], 0.95, places=5)
         self.assertGreaterEqual(values[0][2], MIN_CLASS_MARGIN)
-        self.assertEqual(boxes[0], [100, 100, 200, 300])
 
-    def test_rejects_low_confidence_and_ambiguous_class(self):
-        weak = output_row("9C", top=0.70, second=0.68)
-        boxes, _ = decode_detections(weak, (640, 640), 1.0, (0, 0))
-        self.assertEqual(boxes, [])
-
-    def test_cross_class_overlapping_boxes_are_one_physical_card(self):
-        rows = np.concatenate((output_row("9C"), output_row("9D")), axis=0)
-        boxes, values = decode_detections(rows, (640, 640), 1.0, (0, 0))
-        self.assertEqual(len(boxes), 1)
-        self.assertEqual(len(values), 1)
+    def test_rejects_ambiguous_crop_as_unknown(self):
+        session = FakeSession(probability_row("9C", top=0.50, second=0.45))
+        image = Image.new("RGB", (100, 100), "white")
+        values = classify_card_regions(session, image, [[10, 10, 90, 90]])
+        self.assertEqual(values[0][0], "??")
 
 
 class TableGateTests(unittest.TestCase):
