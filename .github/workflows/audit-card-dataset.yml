@@ -1,0 +1,154 @@
+name: Audit pinned playing card dataset
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - windows-visual-card-recognition
+    paths:
+      - .github/workflows/audit-card-dataset.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit-dataset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GIT_LFS_SKIP_SMUDGE: "1"
+      EXPECTED_COMMIT: 6da007263c51cf5a44a3c06ea840030ff72ce678
+    steps:
+      - name: Check out only the pinned dataset and source README
+        uses: actions/checkout@v4
+        with:
+          repository: TeogopK/Playing-Cards-Object-Detection
+          ref: 6da007263c51cf5a44a3c06ea840030ff72ce678
+          path: upstream
+          fetch-depth: 1
+          lfs: false
+          sparse-checkout: |
+            /README.md
+            /data/
+          sparse-checkout-cone-mode: false
+
+      - name: Hash dataset files and check source claims
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          repo = Path("upstream")
+          data_root = repo / "data"
+          expected_commit = os.environ["EXPECTED_COMMIT"]
+          actual_commit = subprocess.run(
+              ["git", "-C", str(repo), "rev-parse", "HEAD"],
+              check=True, capture_output=True, text=True
+          ).stdout.strip()
+          failures = []
+          if actual_commit != expected_commit:
+              failures.append(f"commit mismatch: expected {expected_commit}, got {actual_commit}")
+
+          readme = (repo / "README.md").read_text(encoding="utf-8")
+          cc0_claims = [
+              line.strip() for line in readme.splitlines()
+              if "CC0: Public Domain" in line
+          ]
+          kaggle_reference = any(
+              "kaggle.com/datasets/andy8744/playing-cards-object-detection-dataset" in line
+              for line in readme.splitlines()
+          )
+          if not cc0_claims:
+              failures.append("pinned README has no explicit CC0: Public Domain claim")
+          if not kaggle_reference:
+              failures.append("pinned README has no expected Kaggle source reference")
+          if not data_root.is_dir():
+              failures.append("pinned checkout has no data/ directory")
+
+          files = []
+          lfs_pointers = []
+          symlinks = []
+          if data_root.is_dir():
+              for path in sorted(data_root.rglob("*")):
+                  if path.is_symlink():
+                      symlinks.append(path.relative_to(repo).as_posix())
+                      continue
+                  if not path.is_file():
+                      continue
+                  content = path.read_bytes()
+                  is_lfs_pointer = content.startswith(
+                      b"version https://git-lfs.github.com/spec/v1\n"
+                  )
+                  relative = path.relative_to(repo).as_posix()
+                  digest = hashlib.sha256(content).hexdigest()
+                  files.append({
+                      "path": relative,
+                      "bytes": len(content),
+                      "sha256": digest,
+                      "is_lfs_pointer": is_lfs_pointer,
+                  })
+                  if is_lfs_pointer:
+                      lfs_pointers.append(relative)
+          if not files:
+              failures.append("no regular files found under data/")
+          if lfs_pointers:
+              failures.append(f"found {len(lfs_pointers)} Git LFS pointer file(s)")
+          if symlinks:
+              failures.append(f"found {len(symlinks)} symlink(s) under data/")
+
+          output = Path("audit-output")
+          output.mkdir(parents=True, exist_ok=True)
+          manifest = "".join(
+              f"{item['sha256']}\t{item['bytes']}\t{item['path']}\n"
+              for item in files
+          )
+          (output / "sha256-manifest.tsv").write_text(manifest, encoding="utf-8")
+          report = {
+              "audit_status": "passed" if not failures else "failed",
+              "audit_scope": "mechanical source and file-integrity checks only",
+              "legal_conclusion": "not_independently_verified",
+              "source_repository": "https://github.com/TeogopK/Playing-Cards-Object-Detection",
+              "source_data_path": "data/",
+              "source_commit_expected": expected_commit,
+              "source_commit_checked_out": actual_commit,
+              "source_readme_url": (
+                  "https://github.com/TeogopK/Playing-Cards-Object-Detection/blob/"
+                  + expected_commit + "/README.md"
+              ),
+              "cc0_claim_lines_from_pinned_readme": cc0_claims,
+              "kaggle_source_reference_present": kaggle_reference,
+              "note": (
+                  "The CC0 result records the repository author's README claim; "
+                  "it does not independently establish rights in every image or label."
+              ),
+              "file_count": len(files),
+              "total_bytes": sum(item["bytes"] for item in files),
+              "lfs_pointer_files": lfs_pointers,
+              "symlinks": symlinks,
+              "failures": failures,
+              "files": files,
+          }
+          (output / "audit-report.json").write_text(
+              json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps({key: report[key] for key in (
+              "audit_status", "source_commit_checked_out", "file_count",
+              "total_bytes", "lfs_pointer_files", "failures"
+          )}, ensure_ascii=False, indent=2))
+          if failures:
+              sys.exit(1)
+          PY
+
+      - name: Upload audit report and hashes only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: card-dataset-provenance-audit
+          path: audit-output/
+          if-no-files-found: warn
+          retention-days: 30
