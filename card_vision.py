@@ -1,9 +1,9 @@
-"""本地 ONNX 扑克牌检测适配层。
+"""本地 ONNX 扑克牌分类适配层。
 
-模型契约 pokerai-card-detector-v1：
-- 输入：float32 RGB NCHW，形状 [1, 3, 640, 640]，像素范围 [0, 1]，等比例缩放并以 114 填充。
-- 输出：float32 [1, N, 57] 或 [N, 57]；每行是输入画布像素坐标 x1,y1,x2,y2、objectness、52 个 class probability。
-- ONNX 自定义元数据必须包含 schema、class_labels、license、source_url、license_url。
+契约 pokerai-card-classifier-v1：
+- 输入：float32 RGB NCHW，[1, 3, 192, 128]，像素范围 [0, 1]。
+- 输出：float32 [1, 52]，按 CARD_LABELS 排列的 softmax 概率。
+- 元数据记录分类顺序、CC0 权重许可和固定训练素材来源。
 """
 import json
 import math
@@ -12,21 +12,20 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image
 
 RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
 SUITS = ("C", "D", "H", "S")
 CARD_LABELS = tuple(rank + suit for rank in RANKS for suit in SUITS)
 SUIT_SYMBOLS = {"C": "♣", "D": "♦", "H": "♥", "S": "♠"}
 MODEL_SOURCE = "牌面视觉模型"
-MODEL_SCHEMA = "pokerai-card-detector-v1"
-INPUT_SIZE = 640
-OUTPUT_COLUMNS = 57
+MODEL_SCHEMA = "pokerai-card-classifier-v1"
+INPUT_HEIGHT = 192
+INPUT_WIDTH = 128
+OUTPUT_CLASSES = 52
 MIN_CONFIDENCE = 0.70
 MIN_CLASS_MARGIN = 0.15
-NMS_IOU_THRESHOLD = 0.35
-RECOGNIZED_LICENSES = {
-    "MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "CC0-1.0", "Unlicense"
-}
+RECOGNIZED_LICENSES = {"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "CC0-1.0", "Unlicense"}
 CARD_CODE_PATTERN = __import__("re").compile(r"^(10|[2-9TJQKA])[♠♥♦♣]$")
 
 
@@ -44,7 +43,7 @@ def _model_path():
 
 
 def validate_model_contract(metadata, input_shape, output_shape):
-    """验证权重来源记录、固定类别顺序和 ONNX 张量形状。"""
+    """检查模型输入、52 类顺序、许可证和数据来源。"""
     if metadata.get("pokerai_schema") != MODEL_SCHEMA:
         raise CardVisionError("ONNX 模型缺少受支持的 pokerai_schema 元数据。")
     try:
@@ -60,21 +59,20 @@ def validate_model_contract(metadata, input_shape, output_shape):
         if not str(metadata.get(key, "")).startswith(("https://", "http://")):
             raise CardVisionError(f"ONNX 模型缺少可核实的 {key} 来源链接。")
     if len(input_shape) != 4:
-        raise CardVisionError("模型输入必须是 [1, 3, 640, 640] NCHW 张量。")
-    for actual, expected, label in zip(input_shape, (1, 3, INPUT_SIZE, INPUT_SIZE), ("batch", "channels", "height", "width")):
+        raise CardVisionError("模型输入必须是 [1, 3, 192, 128] NCHW 张量。")
+    for actual, expected, label in zip(input_shape, (1, 3, INPUT_HEIGHT, INPUT_WIDTH),
+                                       ("batch", "channels", "height", "width")):
         if isinstance(actual, int) and actual > 0 and actual != expected:
             raise CardVisionError(f"模型 {label} 维度应为 {expected}，实际为 {actual}。")
-    if len(output_shape) not in (2, 3):
-        raise CardVisionError("模型输出必须是 [N, 57] 或 [1, N, 57]。")
-    if len(output_shape) == 3 and isinstance(output_shape[0], int) and output_shape[0] != 1:
+    if len(output_shape) != 2 or (isinstance(output_shape[-1], int) and output_shape[-1] != OUTPUT_CLASSES):
+        raise CardVisionError("模型输出必须是 [1, 52] 分类概率张量。")
+    if isinstance(output_shape[0], int) and output_shape[0] != 1:
         raise CardVisionError("模型输出 batch 维度必须为 1。")
-    if isinstance(output_shape[-1], int) and output_shape[-1] != OUTPUT_COLUMNS:
-        raise CardVisionError(f"模型每行必须包含 {OUTPUT_COLUMNS} 个值。")
     return True
 
 
 def load_card_model(model_path=None, required=False):
-    """加载本地 CPU ONNX 模型；模型缺失时可返回 None，让应用安全等待。"""
+    """加载本地 CPU ONNX 分类器；模型缺失时可安全等待。"""
     path = Path(model_path) if model_path else _model_path()
     if not path.is_file():
         if required:
@@ -85,7 +83,7 @@ def load_card_model(model_path=None, required=False):
 
         session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
         if len(session.get_inputs()) != 1 or len(session.get_outputs()) != 1:
-            raise CardVisionError("牌面模型必须恰有一个输入和一个输出。")
+            raise CardVisionError("牌面分类器必须恰有一个输入和一个输出。")
         metadata = session.get_modelmeta().custom_metadata_map or {}
         validate_model_contract(
             metadata,
@@ -96,7 +94,7 @@ def load_card_model(model_path=None, required=False):
     except CardVisionError:
         raise
     except Exception as exc:
-        raise CardVisionError(f"无法加载本地牌面 ONNX 模型：{exc}") from exc
+        raise CardVisionError(f"无法加载本地牌面 ONNX 分类器：{exc}") from exc
 
 
 def card_label_to_unicode(label):
@@ -109,131 +107,47 @@ def card_label_to_unicode(label):
     return rank + SUIT_SYMBOLS[label[-1]]
 
 
-def intersection_over_union(a, b):
-    left, top = max(a[0], b[0]), max(a[1], b[1])
-    right, bottom = min(a[2], b[2]), min(a[3], b[3])
-    if right <= left or bottom <= top:
-        return 0.0
-    overlap = (right - left) * (bottom - top)
-    area_a = max(1.0, (a[2] - a[0]) * (a[3] - a[1]))
-    area_b = max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
-    return overlap / (area_a + area_b - overlap)
-
-
-def decode_detections(raw_output, image_size, scale, padding, confidence_threshold=MIN_CONFIDENCE,
-                      margin_threshold=MIN_CLASS_MARGIN, nms_threshold=NMS_IOU_THRESHOLD):
-    """将固定版 ONNX 检测输出变成图像坐标牌框；分数不足的框直接丢弃。"""
-    rows = np.asarray(raw_output, dtype=np.float32)
-    if rows.ndim == 3:
-        if rows.shape[0] != 1:
-            raise CardVisionError("模型只支持单帧 batch=1 推理。")
-        rows = rows[0]
-    if rows.ndim != 2 or rows.shape[1] != OUTPUT_COLUMNS:
-        raise CardVisionError(f"模型输出应为 [N, {OUTPUT_COLUMNS}]，实际为 {rows.shape}。")
-    image_width, image_height = image_size
-    pad_x, pad_y = padding
-    candidates = []
-    for row in rows:
-        if not np.isfinite(row).all():
-            continue
-        x1, y1, x2, y2 = map(float, row[:4])
-        objectness = float(np.clip(row[4], 0.0, 1.0))
-        class_scores = np.clip(row[5:], 0.0, 1.0)
-        if class_scores.size != len(CARD_LABELS):
-            continue
-        order = np.argsort(class_scores)
-        class_index = int(order[-1])
-        top_score = float(class_scores[class_index])
-        second_score = float(class_scores[int(order[-2])])
-        confidence = objectness * top_score
-        margin = top_score - second_score
-        if confidence < confidence_threshold or margin < margin_threshold:
-            continue
-        if x2 <= x1 or y2 <= y1:
-            continue
-        box = [
-            float(np.clip((x1 - pad_x) / scale, 0, image_width)),
-            float(np.clip((y1 - pad_y) / scale, 0, image_height)),
-            float(np.clip((x2 - pad_x) / scale, 0, image_width)),
-            float(np.clip((y2 - pad_y) / scale, 0, image_height)),
-        ]
-        if box[2] <= box[0] or box[3] <= box[1]:
-            continue
-        candidates.append({
-            "box": [int(round(value)) for value in box],
-            "candidate": card_label_to_unicode(CARD_LABELS[class_index]),
-            "confidence": confidence,
-            "margin": margin,
-            "class_id": class_index,
-            "source": MODEL_SOURCE,
-        })
-
-    candidates.sort(key=lambda item: item["confidence"], reverse=True)
-    kept = []
-    for candidate in candidates:
-        # 同一实体牌不能因模型给出不同类别的重叠框而被计作两张牌。
-        if any(
-            intersection_over_union(candidate["box"], prior["box"]) >= nms_threshold
-            for prior in kept
-        ):
-            continue
-        kept.append(candidate)
-    kept.sort(key=lambda item: ((item["box"][0] + item["box"][2]) / 2,
-                                (item["box"][1] + item["box"][3]) / 2))
-    boxes = [item["box"] for item in kept]
-    values = [(item["candidate"], item["confidence"], item["margin"]) for item in kept]
-    return boxes, values
-
-
-def detect_cards(session, image):
-    """在单张桌面帧上做等比例 letterbox 和本地 ONNX 推理。"""
+def classify_card_regions(session, image, boxes, confidence_threshold=MIN_CONFIDENCE,
+                          margin_threshold=MIN_CLASS_MARGIN):
+    """对轮廓定位出的单张牌框逐张分类；低置信度输出未知牌。"""
     if session is None:
         raise CardVisionError("牌面视觉模型未配置。")
-    rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
-    image_height, image_width = rgb.shape[:2]
-    if image_width < 1 or image_height < 1:
-        raise CardVisionError("不能识别空白图像。")
-    scale = min(INPUT_SIZE / image_width, INPUT_SIZE / image_height)
-    resized_width = max(1, int(round(image_width * scale)))
-    resized_height = max(1, int(round(image_height * scale)))
-    resized = cv2.resize(rgb, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
-    pad_x = (INPUT_SIZE - resized_width) // 2
-    pad_y = (INPUT_SIZE - resized_height) // 2
-    canvas = np.full((INPUT_SIZE, INPUT_SIZE, 3), 114, dtype=np.uint8)
-    canvas[pad_y:pad_y + resized_height, pad_x:pad_x + resized_width] = resized
-    tensor = canvas.transpose(2, 0, 1)[None].astype(np.float32) / 255.0
-    try:
-        output = session.run(
-            [session.get_outputs()[0].name],
-            {session.get_inputs()[0].name: tensor},
-        )[0]
-    except Exception as exc:
-        raise CardVisionError(f"本地牌面模型推理失败：{exc}") from exc
-    return decode_detections(
-        output, (image_width, image_height), scale, (pad_x, pad_y)
-    )
-
-
-
-def detect_table_cards(session, image):
-    """分别推理公共牌区和手牌区，减少全桌缩放造成的小牌角信息损失。"""
-    width, height = image.size
-    regions = (
-        (0.18, 0.27, 0.82, 0.62),  # 公共牌区域
-        (0.24, 0.62, 0.76, 1.00),  # 自己的手牌区域
-    )
-    all_boxes, all_values = [], []
-    for left, top, right, bottom in regions:
-        x1, y1 = int(width * left), int(height * top)
-        x2, y2 = int(width * right), int(height * bottom)
-        if x2 - x1 < 80 or y2 - y1 < 50:
+    input_name = session.get_inputs()[0].name
+    output_name = session.get_outputs()[0].name
+    values = []
+    for box in boxes:
+        if len(box) != 4:
+            values.append(("??", 0.0, 0.0))
             continue
-        crop = image.crop((x1, y1, x2, y2))
-        boxes, values = detect_cards(session, crop)
-        for box, value in zip(boxes, values):
-            all_boxes.append([box[0] + x1, box[1] + y1, box[2] + x1, box[3] + y1])
-            all_values.append(value)
-    return all_boxes, all_values
+        x1, y1, x2, y2 = map(int, box)
+        if x2 <= x1 or y2 <= y1:
+            values.append(("??", 0.0, 0.0))
+            continue
+        crop = image.crop((x1, y1, x2, y2)).convert("RGB")
+        crop = crop.resize((INPUT_WIDTH, INPUT_HEIGHT), Image.Resampling.BILINEAR)
+        tensor = np.asarray(crop, dtype=np.float32).transpose(2, 0, 1)[None] / 255.0
+        try:
+            output = session.run([output_name], {input_name: tensor})[0]
+        except Exception as exc:
+            raise CardVisionError(f"本地牌面分类器推理失败：{exc}") from exc
+        scores = np.asarray(output, dtype=np.float32)
+        if scores.shape != (1, OUTPUT_CLASSES):
+            raise CardVisionError(f"模型输出应为 [1, 52]，实际为 {scores.shape}。")
+        scores = scores[0]
+        if not np.isfinite(scores).all() or np.any(scores < 0) or np.any(scores > 1):
+            raise CardVisionError("模型输出不是有限的分类概率。")
+        if not math.isclose(float(scores.sum()), 1.0, rel_tol=0.05, abs_tol=0.05):
+            raise CardVisionError("模型分类概率总和异常。")
+        order = np.argsort(scores)
+        class_index = int(order[-1])
+        confidence = float(scores[class_index])
+        margin = confidence - float(scores[int(order[-2])])
+        identity = card_label_to_unicode(CARD_LABELS[class_index])
+        if confidence < confidence_threshold or margin < margin_threshold:
+            identity = "??"
+        values.append((identity, confidence, margin))
+    return values
+
 
 def inspect_table_state(cards, confidence_threshold=MIN_CONFIDENCE, margin_threshold=MIN_CLASS_MARGIN):
     """检查牌点来源、置信度、张数、牌局阶段与重复牌。"""
