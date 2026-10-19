@@ -29,6 +29,9 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller==6.15.0
 
+      - name: 运行合成契约回归（仅验证代码路径）
+        run: python -m unittest discover -s tests -v
+
       - name: 验证牌面安全状态
         run: python app.py --self-check
 
@@ -51,6 +54,7 @@ jobs:
           --collect-all rapidocr_onnxruntime
           --collect-all windows_capture
           --collect-all onnxruntime
+          --add-data "models/playing_cards.onnx;models"
           --collect-all cv2
           app.py
 
