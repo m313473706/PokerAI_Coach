@@ -18,30 +18,28 @@
 
 ### 截图回放清单格式
 
-创建 JSON 清单，截图路径相对该 JSON；每张牌填写完整牌框坐标和牌值，例如：
+创建 JSON 清单，截图路径相对该 JSON。简化格式只需写每张截图中可见牌值，顺序按牌框定位器的从上到下、同一行从左到右排列：
 
 ```json
 {
   "screenshots": [
     {
       "image": "table_01.png",
-      "cards": [
-        {"label": "9C", "box": [100, 200, 180, 320]},
-        {"label": "3H", "box": [250, 100, 330, 220]}
-      ]
-    }
+      "cards": ["3H", "2D", "7C", "9C", "3C"]
+    },
+    {"image": "10C.png", "cards": ["10C"]}
   ]
 }
 ```
 
-用 52 张不同牌的目标模拟器实截图回放：
+也可以用 `{"label":"9C","box":[x1,y1,x2,y2]}` 指定每张牌的标注框。工具会检查定位器是否覆盖标注框，并将定位框送入分类器。回放至少需要 52 张不同牌的目标模拟器实截图，覆盖 52 类；通过条件是牌值全部正确、无定位漏检/误检和低置信度拒绝。
 
 ```powershell
 python replay_card_screenshots.py --manifest path\to\manifest.json --model models\playing_cards.onnx --report models\real_replay_report.json
 ```
 
-标注框必须包住截图中的整张牌。工具会检查轮廓定位是否覆盖标注框，并把定位结果送入分类器。报告通过条件为至少 52 张牌、完整覆盖 52 类，并且每张牌都正确、无漏检、无额外牌框且未触发低置信度拒绝。之后 Windows workflow 会再核对报告与 ONNX 权重的 SHA-256。
-
+Windows workflow 会核对回放报告与待打包 ONNX 权重的 SHA-256。
+ 
 ## 运行与 API
 
 - 运行时不调用远程视觉 API，不需要按张付费；识牌在本机 CPU 上完成。
